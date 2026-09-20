@@ -44,6 +44,15 @@ importers:
       '@distribution/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
+      '@distribution/media':
+        specifier: workspace:*
+        version: link:../../packages/media
+      '@distribution/pipelines':
+        specifier: workspace:*
+        version: link:../../packages/pipelines
+      '@distribution/providers':
+        specifier: workspace:*
+        version: link:../../packages/providers
       '@distribution/storage':
         specifier: workspace:*
         version: link:../../packages/storage

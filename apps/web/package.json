@@ -21,7 +21,10 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "sharp": "^0.35.4",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "@distribution/media": "workspace:*",
+    "@distribution/pipelines": "workspace:*",
+    "@distribution/providers": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

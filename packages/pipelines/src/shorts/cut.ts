@@ -1,62 +1,62 @@
 import path from "node:path";
-import { PipelineError, newId, type TranscriptWord } from "@distribution/core";
-import { assets, candidates, eq, projects, sourceVideos, sql, transcripts } from "@distribution/db";
+import { NormalizedTranscript, PipelineError, newId, type TranscriptWord } from "@distribution/core";
+import { assets, candidates, eq, sql, transcripts } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
-import { bin, buildRenderCommand, chunkWords, cropOffsets, generateSrt, parseFacetrackOutput, probeMedia, run } from "@distribution/media";
+import { bin, run, probeMedia, chunkWords, generateSrt, buildRenderCommand, cropOffsets, parseFacetrackOutput } from "@distribution/media";
+import { getLlm } from "@distribution/providers";
 import { getStorage, keys } from "@distribution/storage";
-import { withScratch } from "../common/scratch";
-import { paletteOf, requireProfile } from "../common/profile";
+import { loadProfile, loadSource, paletteOf, withScratch, transcriptTextBetween } from "./common";
 import { runCaptions, runFacetrack, runTitleBar } from "./sidecars";
+import { TITLE_PROMPT, fallbackTitle, fillPrompt } from "./ranking";
+
+const DELIVERY = { w: 1080, h: 1920 };
 
 /**
- * shorts.cut — one candidate → vertical clip (autoshorts lib.rs cut_candidate_blocking):
- * face-tracked crop → caption chunks → PNG overlay track (brand colours) → ffmpeg →
- * retry once without captions on failure → optional title banner → asset row in `review`
- * → enqueue thumbnail + copy.
+ * shorts.cut — the AutoShorts cut, as a job: face-tracked 9:16 crop, brand-coloured
+ * PNG-overlay captions, one retry without captions on ffmpeg failure, optional
+ * title banner, then thumbnail + copy jobs. Each output is an asset row in review.
  */
-export async function shortsCut(ctx: JobContext<"shorts.cut">): Promise<Record<string, unknown>> {
+export async function shortsCut(ctx: JobContext<"shorts.cut">) {
   const { productId, projectId, candidateId } = ctx.payload;
   const db = ctx.db;
   const storage = getStorage();
-  const profile = await requireProfile(db, productId);
-  const palette = paletteOf(profile);
   const cand = (await db.select().from(candidates).where(eq(candidates.id, candidateId)).limit(1))[0];
-  if (!cand) throw new PipelineError("candidate not found");
-  const project = (await db.select().from(projects).where(eq(projects.id, projectId)).limit(1))[0];
-  if (!project?.sourceId) throw new PipelineError("project has no source");
-  const src = (await db.select().from(sourceVideos).where(eq(sourceVideos.id, project.sourceId)).limit(1))[0];
-  if (!src?.storageKey) throw new PipelineError("source not ready");
+  if (!cand) throw new PipelineError("candidate not found", { step: "load" });
   const tr = (await db.select().from(transcripts).where(eq(transcripts.id, cand.transcriptId)).limit(1))[0];
-  if (!tr) throw new PipelineError("transcript not found");
-  const words = tr.words as TranscriptWord[];
+  if (!tr) throw new PipelineError("transcript not found", { step: "load" });
+  const transcript = NormalizedTranscript.parse({ language: tr.language, duration: tr.durationSec, speakers: tr.speakers, words: tr.words, segments: tr.segments });
+  const source = await loadSource(db, tr.sourceId);
+  if (!source.storageKey) throw new PipelineError("source file missing", { step: "load" });
+  const profile = await loadProfile(db, productId);
+  const prefs = profile.contentPreferences;
+  const palette = paletteOf(profile);
+  const src = await storage.localPathFor(source.storageKey);
+  const probe = await probeMedia(src, { signal: ctx.signal });
+  const start = cand.startSec;
+  const end = cand.endSec;
+  const duration = end - start;
 
-  const sourcePath = await storage.localPathFor(src.storageKey);
-  const probe = await probeMedia(sourcePath, { signal: ctx.signal });
-  const duration = cand.endSec - cand.startSec;
-  const flatKey = keys.clip(projectId, candidateId, "flat");
-  const flatPath = await storage.localPathFor(flatKey);
+  const result = await withScratch("cut", async (scratch) => {
+    await ctx.progress(5, "facetrack", "tracking the speaker");
+    const planJson = await runFacetrack(src, start, end, { signal: ctx.signal, onLog: (l) => void ctx.event("debug", l, undefined, "facetrack") });
+    const plan = parseFacetrackOutput(planJson);
+    await ctx.event("info", plan ? `crop: ${plan.summary}` : "crop: centred (no face track)", undefined, "facetrack");
 
-  const result = await withScratch(`cut-${candidateId.slice(0, 8)}`, async (dir) => {
-    // 1. speaker-aware crop (soft)
-    await ctx.progress(5, "facetrack", "tracking the speaker for the crop");
-    const plan = probe.hasVideo ? parseFacetrackOutput(await runFacetrack(sourcePath, cand.startSec, cand.endSec, { signal: ctx.signal, onLog: (l) => void ctx.event("debug", l, undefined, "facetrack") })) : null;
-    await ctx.event("info", plan ? `crop plan: ${plan.summary}` : "centre crop (no reliable face track)", undefined, "facetrack");
-
-    // 2. captions: chunk in TS, rasterise with captions.py, brand colours from the palette
-    const chunks = chunkWords(words, cand.startSec, cand.endSec);
+    await ctx.progress(20, "captions", `rendering captions (${prefs.captionPresetId})`);
+    const words = transcript.words as TranscriptWord[];
+    const chunks = chunkWords(words, start, end);
     let overlay: string | null = null;
-    if (probe.hasVideo && chunks.length) {
-      await ctx.progress(20, "captions", `rendering ${chunks.length} caption frames (${profile.contentPreferences.captionPresetId})`);
+    if (chunks.length && probe.hasVideo) {
       try {
         overlay = await runCaptions(
           {
-            width: 1080,
-            height: 1920,
+            width: DELIVERY.w,
+            height: DELIVERY.h,
             duration,
-            style: profile.contentPreferences.captionPresetId,
+            style: prefs.captionPresetId,
             chunks,
-            outDir: path.join(dir, "captions"),
-            colors: profile.contentPreferences.captionUseBrandColors ? { textColor: "#ffffff", highlightColor: palette.accent, strokeColor: palette.ground, backgroundColor: undefined } : undefined,
+            outDir: path.join(scratch, "captions"),
+            colors: prefs.captionUseBrandColors ? { highlightColor: palette.accent, strokeColor: palette.ground } : undefined,
           },
           { signal: ctx.signal, onLog: (l) => void ctx.event("debug", l, undefined, "captions") },
         );
@@ -64,90 +64,88 @@ export async function shortsCut(ctx: JobContext<"shorts.cut">): Promise<Record<s
         await ctx.event("warn", `captions unavailable, rendering clean: ${err instanceof Error ? err.message : err}`, undefined, "captions");
       }
     }
-    const srt = generateSrt(words, cand.startSec, cand.endSec);
-    await storage.putBuffer(keys.clipArtifact(projectId, candidateId, "captions.srt"), Buffer.from(srt), { contentType: "application/x-subrip" });
+    const srt = generateSrt(words, start, end);
 
-    // 3. ffmpeg render, with the Rust's one retry without captions
-    const render = async (withCaptions: boolean) => {
-      const argv = buildRenderCommand({ sourcePath, startSec: cand.startSec, endSec: cand.endSec, outputPath: flatPath, captionOverlay: withCaptions ? overlay : null, hasVideo: probe.hasVideo, cropOffsets: cropOffsets(plan), supportsDrawtext: false });
+    const flat = path.join(scratch, "flat.mp4");
+    const renderOnce = async (withCaptions: boolean) => {
+      const argv = buildRenderCommand({ sourcePath: src, startSec: start, endSec: end, outputPath: flat, captionOverlay: withCaptions ? overlay : null, hasVideo: probe.hasVideo, cropOffsets: plan ? cropOffsets(plan) : "", supportsDrawtext: false });
       await run(bin("ffmpeg"), ["-hide_banner", "-nostats", "-loglevel", "error", "-progress", "pipe:2", ...argv], {
-        timeoutMs: Math.max(20 * 60_000, duration * 30_000),
+        timeoutMs: 60 * 60_000,
         signal: ctx.signal,
         step: "render",
         onStderrLine: (line) => {
           const m = /^out_time_ms=(\d+)/.exec(line);
-          if (m) void ctx.progress(35 + Math.min(45, (Number(m[1]) / 1_000_000 / duration) * 45), "render", `rendering ${Math.round(Number(m[1]) / 1_000_000)}/${Math.round(duration)}s`);
+          if (m) void ctx.progress(30 + Math.min(40, Math.round((Number(m[1]) / 1_000_000 / Math.max(duration, 1)) * 40)), "render", `encoding ${Math.round(Number(m[1]) / 1_000_000)}s / ${Math.round(duration)}s`);
         },
       });
     };
-    let captionsBurned = Boolean(overlay);
+    await ctx.progress(30, "render", "encoding 9:16 clip");
     try {
-      await render(true);
+      await renderOnce(Boolean(overlay));
     } catch (err) {
       if (!overlay) throw err;
       await ctx.event("warn", `render with captions failed, retrying without: ${err instanceof Error ? err.message : err}`, undefined, "render");
-      captionsBurned = false;
-      await render(false);
+      await renderOnce(false);
+      overlay = null;
     }
-    await storage.commit(flatKey);
 
-    // 4. optional title banner (brand colours) — fails soft, keeps the flat clip
-    let finalKey = flatKey;
+    let finalPath = flat;
     let title: string | null = null;
-    if (profile.contentPreferences.titleBanner && probe.hasVideo) {
-      title = cand.hook.length > 70 ? `${cand.hook.slice(0, 67).trimEnd()}…` : cand.hook;
-      await ctx.progress(85, "title", "adding title banner");
+    if (prefs.titleBanner) {
+      await ctx.progress(72, "title", "writing title");
+      const excerpt = transcriptTextBetween(transcript, start, end).slice(0, 1500);
       try {
-        const titledKey = keys.clip(projectId, candidateId, "titled");
-        const out = await runTitleBar(flatPath, title, await storage.localPathFor(titledKey), { signal: ctx.signal, colors: { fill: "#ffffff", stroke: palette.ground }, onLog: (l) => void ctx.event("debug", l, undefined, "title") });
-        if (out) {
-          await storage.commit(titledKey);
-          finalKey = titledKey;
-        }
+        const res = await getLlm().chat(
+          { messages: [{ role: "user", content: fillPrompt(TITLE_PROMPT, { hook: cand.hook, transcript_excerpt: excerpt }) }], maxTokens: 64, temperature: 0.4 },
+          { purpose: "title", signal: ctx.signal, log: ctx.log, recordUsage: (u) => ctx.recordUsage({ accountId: profile.accountId, productId, provider: u.provider, model: u.model, kind: "chat", purpose: "title", inputTokens: u.inputTokens, outputTokens: u.outputTokens, usdEstimate: u.usdEstimate }) },
+        );
+        title = res.text.trim().split("\n")[0]!.replace(/^["']|["']$/g, "").slice(0, 90) || null;
+      } catch (err) {
+        await ctx.event("warn", `title model failed, using hook: ${err instanceof Error ? err.message : err}`, undefined, "title");
+      }
+      title ??= fallbackTitle(cand.hook, profile.product.name);
+      try {
+        finalPath = await runTitleBar(flat, title, path.join(scratch, "titled.mp4"), { signal: ctx.signal, colors: { fill: "#FFFFFF", stroke: palette.ground }, onLog: (l) => void ctx.event("debug", l, undefined, "title") });
       } catch (err) {
         await ctx.event("warn", `title banner failed soft: ${err instanceof Error ? err.message : err}`, undefined, "title");
+        finalPath = flat;
       }
     }
-    return { finalKey, captionsBurned, title, plan: plan?.summary ?? null, chunks: chunks.length };
+
+    await ctx.progress(90, "store", "storing clip");
+    const assetId = newId();
+    const clipKey = keys.clip(projectId, candidateId, finalPath === flat ? "flat" : "titled");
+    await storage.putFile(clipKey, finalPath, { contentType: "video/mp4" });
+    if (finalPath !== flat) await storage.putFile(keys.clip(projectId, candidateId, "flat"), flat, { contentType: "video/mp4" });
+    const srtKey = keys.clipArtifact(projectId, candidateId, "captions.srt");
+    await storage.putBuffer(srtKey, Buffer.from(srt), { contentType: "application/x-subrip" });
+    const out = await probeMedia(await storage.localPathFor(clipKey), { signal: ctx.signal });
+    await db.insert(assets).values({
+      id: assetId,
+      productId,
+      projectId,
+      type: "clip",
+      sourceId: source.id,
+      candidateId,
+      storageKey: clipKey,
+      mimeType: "video/mp4",
+      width: out.width,
+      height: out.height,
+      durationSec: out.durationSec,
+      sizeBytes: out.sizeBytes,
+      status: "review",
+      approvalState: "pending",
+      profileVersion: profile.version,
+      jobId: ctx.jobId,
+      metadata: { hook: cand.hook, score: cand.score, rank: cand.rank, startSec: start, endSec: end, title, captions: overlay ? prefs.captionPresetId : "none", crop: plan ? "tracked" : "center", srtKey, featureIds: cand.featureIds },
+    });
+    return { assetId, clipKey, title, captions: Boolean(overlay), crop: plan ? "tracked" : "center" };
   });
 
-  const outProbe = await probeMedia(await storage.localPathFor(result.finalKey), { signal: ctx.signal });
-  const head = await storage.head(result.finalKey);
-  const assetId = newId();
-  await db.insert(assets).values({
-    id: assetId,
-    productId,
-    projectId,
-    type: "clip",
-    sourceId: project.sourceId,
-    candidateId,
-    storageKey: result.finalKey,
-    mimeType: "video/mp4",
-    width: outProbe.width,
-    height: outProbe.height,
-    durationSec: outProbe.durationSec,
-    sizeBytes: head?.size ?? null,
-    status: "review",
-    approvalState: "pending",
-    profileVersion: profile.version,
-    jobId: ctx.jobId,
-    metadata: {
-      hook: cand.hook,
-      rationale: cand.rationale,
-      score: cand.score,
-      rank: cand.rank,
-      startSec: cand.startSec,
-      endSec: cand.endSec,
-      captionsBurned: result.captionsBurned,
-      captionPreset: profile.contentPreferences.captionPresetId,
-      title: result.title,
-      cropPlan: result.plan,
-      paletteUsed: { accent: palette.accent, ground: palette.ground },
-    },
-  });
-  await ctx.progress(96, "save", "clip saved to library");
-  await ctx.queue.enqueue("shorts.thumbnail", { productId, projectId, assetId }, { productId, projectId, assetId, singletonKey: `shorts.thumbnail:${assetId}` });
+  await ctx.queue.enqueue("shorts.thumbnail", { productId, projectId, assetId: result.assetId }, { productId, projectId, assetId: result.assetId, singletonKey: `thumb:${result.assetId}` });
   const platforms = profile.publishing.cadence.map((c) => c.platform);
-  await ctx.queue.enqueue("copy.generate", { productId, assetId, platforms: platforms.length ? [...new Set(platforms)] : ["instagram", "tiktok", "youtube", "x", "linkedin"] }, { productId, assetId, singletonKey: `copy.generate:${assetId}` });
-  return { assetId, storageKey: result.finalKey, captionsBurned: result.captionsBurned, durationSec: outProbe.durationSec };
+  await ctx.queue.enqueue("copy.generate", { productId, assetId: result.assetId, platforms: platforms.length ? [...new Set(platforms)] : ["instagram", "x", "youtube", "linkedin", "tiktok"] }, { productId, assetId: result.assetId, singletonKey: `copy:${result.assetId}` });
+  await db.execute(sql`update projects set status = case when exists (select 1 from candidates c join assets a on a.candidate_id = c.id where c.project_id = ${projectId} and c.selected) then 'completed' else status end, updated_at = now() where id = ${projectId}`);
+  await ctx.progress(100, "done", "clip in review");
+  return result;
 }

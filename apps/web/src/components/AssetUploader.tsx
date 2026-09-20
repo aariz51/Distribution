@@ -1,6 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { buttonClass, Spinner } from "@/components/ui/Button";
 
 export function AssetUploader({ productId }: { productId: string }) {
   const router = useRouter();
@@ -26,15 +27,19 @@ export function AssetUploader({ productId }: { productId: string }) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-4 text-sm">
-      <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-50">
-        Add logo<input type="file" accept="image/*" className="hidden" onChange={(e) => upload("logo", e.target.files)} />
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <label className={buttonClass("secondary", "sm", "cursor-pointer")}>
+        Add logo<input type="file" accept="image/*" className="sr-only" onChange={(e) => upload("logo", e.target.files)} />
       </label>
-      <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-50">
-        Add screenshots<input type="file" accept="image/*" multiple className="hidden" onChange={(e) => upload("screenshot", e.target.files)} />
+      <label className={buttonClass("secondary", "sm", "cursor-pointer")}>
+        Add screenshots<input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => upload("screenshot", e.target.files)} />
       </label>
-      {busy && <span className="text-zinc-500">{busy}</span>}
-      {error && <span className="text-red-600">{error}</span>}
+      {busy && (
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+          <Spinner /> {busy}
+        </span>
+      )}
+      {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
   );
 }

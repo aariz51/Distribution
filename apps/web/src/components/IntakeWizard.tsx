@@ -1,9 +1,20 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/Button";
+import { Field, HexChip, Select, TextArea, TextInput, Toggle } from "@/components/ui/Field";
+import { FileDrop } from "@/components/FileDrop";
+import { cn } from "@/components/ui/cn";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 const STEPS = ["Product", "Brand", "Sources", "Publishing", "Review"] as const;
+const STEP_HINTS: Record<Step, string> = {
+  0: "Name, features, audience",
+  1: "Logo, screenshots, colours",
+  2: "Reference and long-form video",
+  3: "Cadence and content rules",
+  4: "Check and create",
+};
 
 interface FeatureDraft { title: string; detail: string }
 
@@ -155,197 +166,316 @@ export function IntakeWizard() {
     }
   }
 
-  const input = "mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm";
-  const label = "block text-sm text-zinc-700";
+
+  const stepTitle: Record<Step, string> = {
+    0: "What is the product?",
+    1: "Brand assets",
+    2: "Video sources",
+    3: "Publishing & content preferences",
+    4: "Review",
+  };
+
+  function moveFeature(i: number, dir: -1 | 1) {
+    setFeatures((fs) => {
+      const j = i + dir;
+      if (j < 0 || j >= fs.length) return fs;
+      const c = [...fs];
+      [c[i], c[j]] = [c[j]!, c[i]!];
+      return c;
+    });
+  }
+
+  const colourRows: Array<[string, string, (s: string) => void]> = [
+    ["Accent", accent, setAccent],
+    ["Ink", ink, setInk],
+    ["Canvas", canvas, setCanvas],
+    ["Ground", ground, setGround],
+  ];
+
+  const reviewRows: Array<{ k: string; v: React.ReactNode }> = [
+    { k: "Product", v: <>{name} <span className="text-muted">— {tagline}</span></> },
+    { k: "Category", v: category },
+    { k: "Features", v: <ol className="space-y-0.5">{featureList.map((f, i) => <li key={i}><span className="mr-2 font-mono text-[12px] tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>{f.title}</li>)}</ol> },
+    { k: "Audience", v: audience },
+    { k: "Platforms", v: platforms.join(", ") },
+    { k: "Brand", v: <>{logo ? "Logo" : "No logo"} · {screens.length} {screens.length === 1 ? "screenshot" : "screenshots"} · colours {colorsProvided ? <span className="inline-flex gap-1 align-middle"><HexChip hex={accent} /><HexChip hex={ink} /></span> : "to be inferred"}</> },
+    { k: "Sources", v: `${referenceUrl ? "Reference video" : "Library reference"} · ${longFormUrls.split(/\s+/).filter(Boolean).length} long-form URLs · ${channelUrl ? "channel connected" : "no channel"}` },
+    { k: "Content", v: `voice: ${voice} · people policy: ${peoplePolicy} · captions: ${captionPreset}` },
+  ];
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <ol className="mb-8 flex items-center gap-2 text-xs">
-        {STEPS.map((s, i) => (
-          <li key={s} className={`flex items-center gap-2 ${i === step ? "text-zinc-900" : "text-zinc-400"}`}>
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full border ${i <= step ? "border-zinc-900 bg-zinc-900 text-white" : "border-zinc-300"}`}>{i + 1}</span>
-            {s}
-            {i < STEPS.length - 1 && <span className="mx-1 h-px w-8 bg-zinc-200" />}
-          </li>
-        ))}
+    <div className="grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)]">
+      {/* Left rail stepper */}
+      <ol className="flex gap-2 overflow-x-auto lg:sticky lg:top-[88px] lg:block lg:self-start lg:space-y-1" aria-label="Steps">
+        {STEPS.map((s, i) => {
+          const state = i < step ? "done" : i === step ? "current" : "todo";
+          return (
+            <li key={s}>
+              <button
+                type="button"
+                disabled={i > step || busy !== null}
+                onClick={() => setStep(i as Step)}
+                aria-current={state === "current" ? "step" : undefined}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-[8px] px-2.5 py-2 text-left text-sm motion-safe:transition-colors disabled:cursor-default",
+                  state === "current" ? "bg-surface shadow-[var(--shadow-soft)] border border-hairline" : "border border-transparent",
+                  state === "done" && "hover:bg-surface",
+                )}
+              >
+                <span
+                  className={cn(
+                    "grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[11px] font-semibold tabular-nums",
+                    state === "done" ? "border-accent bg-accent text-white" : state === "current" ? "border-ink bg-ink text-white" : "border-hairline-strong text-faint",
+                  )}
+                >
+                  {state === "done" ? (
+                    <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
+                      <path d="M3.5 8.5l3 3 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    i + 1
+                  )}
+                </span>
+                <span className="min-w-0">
+                  <span className={cn("block font-medium", state === "todo" ? "text-muted" : "text-ink")}>{s}</span>
+                  <span className="hidden text-xs text-faint lg:block">{STEP_HINTS[i as Step]}</span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ol>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
-        {step === 0 && (
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold">What is the product?</h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className={label}>Name<input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Civia" /></label>
-              <label className={label}>Category<input className={input} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="education" /></label>
-            </div>
-            <label className={label}>One-line description<input className={input} value={tagline} onChange={(e) => setTagline(e.target.value)} placeholder="Pass the US civics test with confidence" /></label>
-            <label className={label}>Full description <span className="text-zinc-400">(optional)</span><textarea className={input} rows={3} value={description} onChange={(e) => setDescription(e.target.value)} /></label>
-            <div>
-              <p className={label}>Features, most important first</p>
-              <ul className="mt-1 space-y-2">
-                {features.map((f, i) => (
-                  <li key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-                    <input className={input + " mt-0"} placeholder={`Feature ${i + 1}`} value={f.title} onChange={(e) => setFeatures((fs) => fs.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
-                    <input className={input + " mt-0"} placeholder="What it actually does (optional)" value={f.detail} onChange={(e) => setFeatures((fs) => fs.map((x, j) => (j === i ? { ...x, detail: e.target.value } : x)))} />
-                    <div className="flex gap-1">
-                      <button type="button" disabled={i === 0} onClick={() => setFeatures((fs) => { const c = [...fs]; [c[i - 1], c[i]] = [c[i]!, c[i - 1]!]; return c; })} className="rounded border px-2 text-xs disabled:opacity-30">↑</button>
-                      <button type="button" onClick={() => setFeatures((fs) => fs.filter((_, j) => j !== i))} className="rounded border px-2 text-xs">✕</button>
+      {/* Content */}
+      <div className="min-w-0">
+        <section className="surface">
+          <header className="border-b border-hairline px-6 py-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-faint tabular-nums">Step {step + 1} of {STEPS.length}</p>
+            <h2 className="mt-0.5 text-[18px] font-semibold tracking-tight">{stepTitle[step]}</h2>
+          </header>
+
+          <div className="px-6 py-6">
+            {step === 0 && (
+              <div className="space-y-5">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Name" htmlFor="f-name">
+                    <TextInput id="f-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Civia" autoFocus />
+                  </Field>
+                  <Field label="Category" htmlFor="f-category">
+                    <TextInput id="f-category" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="education" />
+                  </Field>
+                </div>
+                <Field label="One-line description" htmlFor="f-tagline">
+                  <TextInput id="f-tagline" value={tagline} onChange={(e) => setTagline(e.target.value)} placeholder="Pass the US civics test with confidence" />
+                </Field>
+                <Field label="Full description" optional htmlFor="f-desc">
+                  <TextArea id="f-desc" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+                </Field>
+
+                <Field label="Features" hint="Most important first. Order drives what promo films and clips lead with.">
+                  <ul className="space-y-2">
+                    {features.map((f, i) => (
+                      <li key={i} className="grid items-center gap-2 sm:grid-cols-[24px_1fr_2fr_auto]">
+                        <span className="hidden font-mono text-[12px] tabular-nums text-faint sm:block">{String(i + 1).padStart(2, "0")}</span>
+                        <TextInput placeholder={`Feature ${i + 1}`} value={f.title} onChange={(e) => setFeatures((fs) => fs.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
+                        <TextInput placeholder="What it actually does (optional)" value={f.detail} onChange={(e) => setFeatures((fs) => fs.map((x, j) => (j === i ? { ...x, detail: e.target.value } : x)))} />
+                        <div className="flex gap-1">
+                          <Button size="sm" className="w-8 px-0" aria-label="Move up" disabled={i === 0} onClick={() => moveFeature(i, -1)}>↑</Button>
+                          <Button size="sm" className="w-8 px-0" aria-label="Move down" disabled={i === features.length - 1} onClick={() => moveFeature(i, 1)}>↓</Button>
+                          <Button size="sm" variant="ghost" className="w-8 px-0" aria-label="Remove feature" onClick={() => setFeatures((fs) => fs.filter((_, j) => j !== i))}>×</Button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <Button size="sm" variant="ghost" className="mt-2 -ml-2" onClick={() => setFeatures((fs) => [...fs, { title: "", detail: "" }])}>
+                    + Add feature
+                  </Button>
+                </Field>
+
+                <Field label="Target audience" htmlFor="f-audience">
+                  <TextArea id="f-audience" rows={2} value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Green card holders preparing for the naturalization interview" />
+                </Field>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Pain points" hint="Comma separated" htmlFor="f-pain">
+                    <TextInput id="f-pain" value={painPoints} onChange={(e) => setPainPoints(e.target.value)} />
+                  </Field>
+                  <Field label="Competitors" hint="Comma separated" htmlFor="f-comp">
+                    <TextInput id="f-comp" value={competitors} onChange={(e) => setCompetitors(e.target.value)} />
+                  </Field>
+                </div>
+                <Field label="Platforms">
+                  <div className="flex flex-wrap gap-1.5">
+                    {["ios", "android", "web", "desktop"].map((p) => {
+                      const on = platforms.includes(p);
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => setPlatforms((ps) => (on ? ps.filter((x) => x !== p) : [...ps, p]))}
+                          className={cn("h-8 rounded-full border px-3 text-[13px] motion-safe:transition-colors", on ? "border-ink bg-ink text-white" : "border-hairline-strong bg-surface text-muted hover:text-ink")}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Field>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Field label="Website" optional htmlFor="f-web"><TextInput id="f-web" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" /></Field>
+                  <Field label="App Store" optional htmlFor="f-ios"><TextInput id="f-ios" value={appStore} onChange={(e) => setAppStore(e.target.value)} placeholder="https://" /></Field>
+                  <Field label="Play Store" optional htmlFor="f-play"><TextInput id="f-play" value={playStore} onChange={(e) => setPlayStore(e.target.value)} placeholder="https://" /></Field>
+                </div>
+                <Field label="Category tags" hint="Comma separated" optional htmlFor="f-tags">
+                  <TextInput id="f-tags" value={tags} onChange={(e) => setTags(e.target.value)} />
+                </Field>
+              </div>
+            )}
+
+            {step === 1 && (
+              <div className="space-y-6">
+                <Field label="Logo" hint="PNG or SVG, square preferred.">
+                  <FileDrop files={logo ? [logo] : []} onChange={(fs) => setLogo(fs[0] ?? null)} label={logo ? "Replace logo" : "Add logo"} hint="One image" />
+                </Field>
+                <Field label="Screenshots" hint="In the order you want them shown. Hover a tile to reorder or remove.">
+                  <FileDrop files={screens} onChange={setScreens} multiple label="Add screenshots" hint={screens.length ? `${screens.length} selected` : "Portrait or landscape, any count"} previewAspect="portrait" />
+                </Field>
+                <Toggle checked={colorsProvided} onChange={setColorsProvided} label="I know my brand colours" hint="Otherwise they are sampled from the logo and screenshots and marked as inferred." />
+                {colorsProvided ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {colourRows.map(([n, v, set]) => (
+                      <label key={n} className="block cursor-pointer">
+                        <span className="relative block aspect-[4/3] overflow-hidden rounded-[8px] border border-hairline" style={{ background: v }}>
+                          <input type="color" value={v} onChange={(e) => set(e.target.value)} className="absolute inset-0 h-full w-full opacity-0" aria-label={`${n} colour`} />
+                        </span>
+                        <span className="mt-1.5 flex items-center justify-between gap-2">
+                          <span className="text-[12px] font-medium">{n}</span>
+                          <HexChip hex={v} />
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-[8px] border border-hairline bg-canvas px-3 py-2.5 text-xs text-muted">Colours will be sampled from the logo and screenshots and clearly marked as inferred. You can confirm or edit them afterwards.</p>
+                )}
+                <Field label="Call to action" htmlFor="f-cta">
+                  <TextInput id="f-cta" value={cta} onChange={(e) => setCta(e.target.value)} />
+                </Field>
+              </div>
+            )}
+
+            {step === 2 && (
+              <div className="space-y-5">
+                <p className="text-sm text-muted">All optional. Everything here can also be added from the product page later.</p>
+                <Field label="Reference video for the promo film" optional htmlFor="f-ref" hint="Used only as a motion-language reference; nothing is copied. Leave empty to pick from the curated reference library.">
+                  <TextInput id="f-ref" value={referenceUrl} onChange={(e) => setReferenceUrl(e.target.value)} placeholder="https://youtube.com/watch?v=…" />
+                </Field>
+                {referenceUrl && (
+                  <Field label="Rights to the reference" htmlFor="f-ref-rights">
+                    <Select id="f-ref-rights" value={referenceRights} onChange={(e) => setReferenceRights(e.target.value as typeof referenceRights)}>
+                      <option value="unknown">Unknown (analysis only, no footage reuse)</option>
+                      <option value="owned">I made it</option>
+                      <option value="licensed">Creative Commons / licensed</option>
+                      <option value="third_party_attested">I have permission from the rights holder</option>
+                    </Select>
+                  </Field>
+                )}
+                <Field label="Long-form videos to cut into shorts" optional htmlFor="f-long" hint="One URL per line. Each is probed for licence and rights before anything is downloaded.">
+                  <TextArea id="f-long" rows={3} value={longFormUrls} onChange={(e) => setLongFormUrls(e.target.value)} placeholder="https://youtube.com/watch?v=…" className="font-mono text-[13px]" />
+                </Field>
+                <Field label="Your own YouTube channel" optional htmlFor="f-channel" hint="New uploads become clip sources.">
+                  <TextInput id="f-channel" value={channelUrl} onChange={(e) => setChannelUrl(e.target.value)} placeholder="https://youtube.com/@yourchannel" />
+                </Field>
+              </div>
+            )}
+
+            {step === 3 && (
+              <div className="space-y-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Timezone" htmlFor="f-tz"><TextInput id="f-tz" value={timezone} onChange={(e) => setTimezone(e.target.value)} /></Field>
+                  <Field label="Publish lead time" hint="Minutes before the slot that the post is handed to Postiz." htmlFor="f-lead">
+                    <TextInput id="f-lead" type="number" min={5} value={leadTime} onChange={(e) => setLeadTime(Number(e.target.value))} className="tabular-nums" />
+                  </Field>
+                </div>
+                <p className="rounded-[8px] border border-hairline bg-canvas px-3 py-2.5 text-xs text-muted">Postiz connection and channel cadence are configured on the product page after creation.</p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Caption preset" htmlFor="f-cap"><TextInput id="f-cap" value={captionPreset} onChange={(e) => setCaptionPreset(e.target.value)} className="font-mono text-[13px]" /></Field>
+                  <Field label="Clips per source" htmlFor="f-cps"><TextInput id="f-cps" type="number" min={1} max={25} value={clipsPerSource} onChange={(e) => setClipsPerSource(Number(e.target.value))} className="tabular-nums" /></Field>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Toggle checked={useBrandColors} onChange={setUseBrandColors} label="Captions use brand colours" />
+                  <Toggle checked={titleBanner} onChange={setTitleBanner} label="Title banner on clips" />
+                  <Toggle checked={sfx} onChange={setSfx} label="Sound design" />
+                  <Toggle checked={broll} onChange={setBroll} label="B-roll enrichment" hint="Slow; uses stock footage APIs." />
+                  <Toggle checked={outro} onChange={setOutro} label="Branded end card" />
+                  <Toggle checked={cleanSource} onChange={setCleanSource} label="Clean source" hint="Remove burned-in captions, isolate voice." />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="End-card voice" required htmlFor="f-voice">
+                    <Select id="f-voice" value={voice} onChange={(e) => setVoice(e.target.value as typeof voice)}>
+                      <option value="">Choose…</option>
+                      <option value="none">No voice line</option>
+                      <option value="clone">Clone the speaker&apos;s voice from the clip</option>
+                    </Select>
+                  </Field>
+                  <Field label="People policy" required hint="For B-roll and thumbnails." htmlFor="f-people">
+                    <Select id="f-people" value={peoplePolicy} onChange={(e) => setPeoplePolicy(e.target.value as typeof peoplePolicy)}>
+                      <option value="">Choose…</option>
+                      <option value="off">No restriction</option>
+                      <option value="no-people">Avoid footage with people</option>
+                      <option value="no-women">Avoid footage showing women</option>
+                    </Select>
+                  </Field>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Copy tone" htmlFor="f-tone"><TextInput id="f-tone" value={copyTone} onChange={(e) => setCopyTone(e.target.value)} /></Field>
+                  <Field label="Hashtags" htmlFor="f-hash">
+                    <Select id="f-hash" value={hashtags} onChange={(e) => setHashtags(e.target.value as typeof hashtags)}>
+                      <option value="none">None</option>
+                      <option value="few">A few, specific</option>
+                      <option value="many">Many</option>
+                    </Select>
+                  </Field>
+                </div>
+              </div>
+            )}
+
+            {step === 4 && (
+              <div className="space-y-5 text-sm">
+                <dl className="divide-y divide-hairline">
+                  {reviewRows.map((row) => (
+                    <div key={row.k} className="grid gap-1 py-2.5 first:pt-0 last:pb-0 sm:grid-cols-[140px_1fr]">
+                      <dt className="text-muted">{row.k}</dt>
+                      <dd className="min-w-0">{row.v}</dd>
                     </div>
-                  </li>
-                ))}
-              </ul>
-              <button type="button" onClick={() => setFeatures((fs) => [...fs, { title: "", detail: "" }])} className="mt-2 text-xs text-zinc-600 underline">Add feature</button>
-            </div>
-            <label className={label}>Target audience<textarea className={input} rows={2} value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Green card holders preparing for the naturalization interview" /></label>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className={label}>Pain points <span className="text-zinc-400">(comma separated)</span><input className={input} value={painPoints} onChange={(e) => setPainPoints(e.target.value)} /></label>
-              <label className={label}>Competitors <span className="text-zinc-400">(comma separated)</span><input className={input} value={competitors} onChange={(e) => setCompetitors(e.target.value)} /></label>
-            </div>
-            <div>
-              <p className={label}>Platforms</p>
-              <div className="mt-1 flex flex-wrap gap-3 text-sm">
-                {["ios", "android", "web", "desktop"].map((p) => (
-                  <label key={p} className="flex items-center gap-1.5"><input type="checkbox" checked={platforms.includes(p)} onChange={(e) => setPlatforms((ps) => (e.target.checked ? [...ps, p] : ps.filter((x) => x !== p)))} />{p}</label>
-                ))}
+                  ))}
+                </dl>
+                <p className="rounded-[8px] border border-hairline bg-canvas px-3 py-2.5 text-xs text-muted">Creating the product uploads the assets and, unless you provided colours, queues a palette-sampling job. Everything downstream reads from this profile; you will not be asked these questions again.</p>
               </div>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <label className={label}>Website<input className={input} value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://" /></label>
-              <label className={label}>App Store<input className={input} value={appStore} onChange={(e) => setAppStore(e.target.value)} placeholder="https://" /></label>
-              <label className={label}>Play Store<input className={input} value={playStore} onChange={(e) => setPlayStore(e.target.value)} placeholder="https://" /></label>
-            </div>
-            <label className={label}>Category tags <span className="text-zinc-400">(comma separated)</span><input className={input} value={tags} onChange={(e) => setTags(e.target.value)} /></label>
+            )}
           </div>
-        )}
+        </section>
 
-        {step === 1 && (
-          <div className="space-y-5">
-            <h2 className="text-lg font-semibold">Brand assets</h2>
-            <label className={label}>Logo (PNG/SVG, square preferred)
-              <input type="file" accept="image/*" className="mt-1 block text-sm" onChange={(e) => setLogo(e.target.files?.[0] ?? null)} />
-            </label>
-            <label className={label}>Screenshots (in the order you want them shown)
-              <input type="file" accept="image/*" multiple className="mt-1 block text-sm" onChange={(e) => setScreens(Array.from(e.target.files ?? []))} />
-              {screens.length > 0 && <span className="mt-1 block text-xs text-zinc-500">{screens.length} selected</span>}
-            </label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={colorsProvided} onChange={(e) => setColorsProvided(e.target.checked)} />I know my brand colours</label>
-            {colorsProvided ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {[["Accent", accent, setAccent], ["Ink", ink, setInk], ["Canvas", canvas, setCanvas], ["Ground", ground, setGround]].map(([n, v, set]) => (
-                  <label key={n as string} className="text-xs text-zinc-600">{n as string}
-                    <div className="mt-1 flex items-center gap-2"><input type="color" value={v as string} onChange={(e) => (set as (s: string) => void)(e.target.value)} /><code>{v as string}</code></div>
-                  </label>
-                ))}
-              </div>
+        {/* Sticky footer */}
+        <div className="sticky bottom-0 z-10 mt-4 -mx-1 flex items-center justify-between gap-3 rounded-[10px] border border-hairline bg-surface/95 px-4 py-3 shadow-[var(--shadow-raise)] backdrop-blur-[2px]">
+          <Button disabled={step === 0 || busy !== null} onClick={() => setStep((s) => (s - 1) as Step)}>
+            Back
+          </Button>
+          <div className="flex min-w-0 items-center gap-3">
+            {error && <p className="truncate text-xs text-red-600">{error}</p>}
+            {!stepValid[step] && step < 4 && !error && <p className="hidden text-xs text-faint sm:block">{step === 1 ? "Add a logo or at least one screenshot" : step === 3 ? "Choose voice and people policy" : "Fill the required fields"}</p>}
+            {step < 4 ? (
+              <Button variant="primary" disabled={!stepValid[step]} onClick={() => setStep((s) => (s + 1) as Step)}>
+                Continue
+              </Button>
             ) : (
-              <p className="rounded-md bg-zinc-50 p-3 text-xs text-zinc-600">Colours will be sampled from the logo and screenshots and clearly marked as inferred. You can confirm or edit them afterwards.</p>
+              <Button variant="primary" disabled={busy !== null} loading={busy !== null} onClick={submit}>
+                {busy ?? "Create product"}
+              </Button>
             )}
-            <label className={label}>Call to action<input className={input} value={cta} onChange={(e) => setCta(e.target.value)} /></label>
           </div>
-        )}
-
-        {step === 2 && (
-          <div className="space-y-5">
-            <h2 className="text-lg font-semibold">Video sources <span className="text-sm font-normal text-zinc-500">(all optional)</span></h2>
-            <label className={label}>Reference / inspiration video for the promo film
-              <input className={input} value={referenceUrl} onChange={(e) => setReferenceUrl(e.target.value)} placeholder="https://youtube.com/watch?v=…" />
-              <span className="mt-1 block text-xs text-zinc-500">Used only as a motion-language reference; nothing is copied. Leave empty to pick from the curated reference library.</span>
-            </label>
-            {referenceUrl && (
-              <label className={label}>Rights to the reference
-                <select className={input} value={referenceRights} onChange={(e) => setReferenceRights(e.target.value as typeof referenceRights)}>
-                  <option value="unknown">Unknown (analysis only, no footage reuse)</option>
-                  <option value="owned">I made it</option>
-                  <option value="licensed">Creative Commons / licensed</option>
-                  <option value="third_party_attested">I have permission from the rights holder</option>
-                </select>
-              </label>
-            )}
-            <label className={label}>Long-form videos to cut into shorts <span className="text-zinc-400">(one URL per line)</span>
-              <textarea className={input} rows={3} value={longFormUrls} onChange={(e) => setLongFormUrls(e.target.value)} placeholder="https://youtube.com/watch?v=…" />
-              <span className="mt-1 block text-xs text-zinc-500">Each URL is probed for licence and rights before anything is downloaded. Uploads are added from the product page.</span>
-            </label>
-            <label className={label}>Your own YouTube channel <span className="text-zinc-400">(new uploads become clip sources)</span>
-              <input className={input} value={channelUrl} onChange={(e) => setChannelUrl(e.target.value)} placeholder="https://youtube.com/@yourchannel" />
-            </label>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="space-y-5">
-            <h2 className="text-lg font-semibold">Publishing &amp; content preferences</h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className={label}>Timezone<input className={input} value={timezone} onChange={(e) => setTimezone(e.target.value)} /></label>
-              <label className={label}>Publish lead time (minutes)<input type="number" min={5} className={input} value={leadTime} onChange={(e) => setLeadTime(Number(e.target.value))} /></label>
-            </div>
-            <p className="rounded-md bg-zinc-50 p-3 text-xs text-zinc-600">Postiz connection and channel cadence are configured on the product page after creation (Phase 3).</p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className={label}>Caption preset<input className={input} value={captionPreset} onChange={(e) => setCaptionPreset(e.target.value)} /></label>
-              <label className={label}>Clips per source<input type="number" min={1} max={25} className={input} value={clipsPerSource} onChange={(e) => setClipsPerSource(Number(e.target.value))} /></label>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 text-sm">
-              <label className="flex items-center gap-2"><input type="checkbox" checked={useBrandColors} onChange={(e) => setUseBrandColors(e.target.checked)} />Captions use brand colours</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={titleBanner} onChange={(e) => setTitleBanner(e.target.checked)} />Title banner on clips</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={sfx} onChange={(e) => setSfx(e.target.checked)} />Sound design</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={broll} onChange={(e) => setBroll(e.target.checked)} />B-roll enrichment (slow, uses stock footage APIs)</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={outro} onChange={(e) => setOutro(e.target.checked)} />Branded end card</label>
-              <label className="flex items-center gap-2"><input type="checkbox" checked={cleanSource} onChange={(e) => setCleanSource(e.target.checked)} />Clean source (remove burned-in captions, isolate voice)</label>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className={label}>End-card voice <span className="text-red-500">*</span>
-                <select className={input} value={voice} onChange={(e) => setVoice(e.target.value as typeof voice)}>
-                  <option value="">Choose…</option>
-                  <option value="none">No voice line</option>
-                  <option value="clone">Clone the speaker&apos;s voice from the clip</option>
-                </select>
-              </label>
-              <label className={label}>People policy for B-roll and thumbnails <span className="text-red-500">*</span>
-                <select className={input} value={peoplePolicy} onChange={(e) => setPeoplePolicy(e.target.value as typeof peoplePolicy)}>
-                  <option value="">Choose…</option>
-                  <option value="off">No restriction</option>
-                  <option value="no-people">Avoid footage with people</option>
-                  <option value="no-women">Avoid footage showing women</option>
-                </select>
-              </label>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className={label}>Copy tone<input className={input} value={copyTone} onChange={(e) => setCopyTone(e.target.value)} /></label>
-              <label className={label}>Hashtags
-                <select className={input} value={hashtags} onChange={(e) => setHashtags(e.target.value as typeof hashtags)}>
-                  <option value="none">None</option><option value="few">A few, specific</option><option value="many">Many</option>
-                </select>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {step === 4 && (
-          <div className="space-y-4 text-sm">
-            <h2 className="text-lg font-semibold">Review</h2>
-            <dl className="grid gap-2 sm:grid-cols-[140px_1fr]">
-              <dt className="text-zinc-500">Product</dt><dd>{name} — {tagline}</dd>
-              <dt className="text-zinc-500">Category</dt><dd>{category}</dd>
-              <dt className="text-zinc-500">Features</dt><dd><ol className="list-decimal pl-4">{featureList.map((f, i) => <li key={i}>{f.title}</li>)}</ol></dd>
-              <dt className="text-zinc-500">Audience</dt><dd>{audience}</dd>
-              <dt className="text-zinc-500">Brand</dt><dd>{logo ? "logo" : "no logo"}, {screens.length} screenshots, colours {colorsProvided ? "provided" : "to be inferred"}</dd>
-              <dt className="text-zinc-500">Sources</dt><dd>{referenceUrl ? "reference video" : "library reference"}; {longFormUrls.split(/\s+/).filter(Boolean).length} long-form URLs; {channelUrl ? "channel connected" : "no channel"}</dd>
-              <dt className="text-zinc-500">Content</dt><dd>voice: {voice}; people policy: {peoplePolicy}; captions: {captionPreset}</dd>
-            </dl>
-            <p className="rounded-md bg-zinc-50 p-3 text-xs text-zinc-600">Creating the product uploads the assets and, unless you provided colours, queues a palette-sampling job. Everything downstream reads from this profile; you will not be asked these questions again.</p>
-          </div>
-        )}
-
-        {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-
-        <div className="mt-6 flex items-center justify-between">
-          <button type="button" disabled={step === 0 || busy !== null} onClick={() => setStep((s) => (s - 1) as Step)} className="rounded-md border border-zinc-300 px-4 py-2 text-sm disabled:opacity-40">Back</button>
-          {step < 4 ? (
-            <button type="button" disabled={!stepValid[step]} onClick={() => setStep((s) => (s + 1) as Step)} className="rounded-md bg-zinc-900 px-4 py-2 text-sm text-white disabled:opacity-40">Continue</button>
-          ) : (
-            <button type="button" disabled={busy !== null} onClick={submit} className="rounded-md bg-zinc-900 px-4 py-2 text-sm text-white disabled:opacity-40">{busy ?? "Create product"}</button>
-          )}
         </div>
-      </section>
+      </div>
     </div>
   );
 }

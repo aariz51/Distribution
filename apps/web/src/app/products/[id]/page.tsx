@@ -1,11 +1,20 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getProduct, listBrandAssets } from "@/lib/products";
-import { db, desc, eq, jobs } from "@/lib/db";
-import { Nav } from "@/components/Nav";
+import { libraryCounts, listJobs } from "@/lib/library";
+import { AppShell } from "@/components/AppShell";
 import { PaletteCard } from "@/components/PaletteCard";
 import { AssetUploader } from "@/components/AssetUploader";
 import { JobProgress } from "@/components/JobProgress";
+import { SourcesPanel } from "@/components/SourcesPanel";
+import { Library } from "@/components/Library";
+import { listLibrary } from "@/lib/library";
+import { sourceVideos } from "@/lib/db";
+import { Card, CardBody, CardHeader } from "@/components/ui/Card";
+import { StatTile } from "@/components/ui/StatTile";
+import { ButtonLink } from "@/components/ui/Button";
+import { formatRelative, humanize } from "@/components/ui/format";
 
 export const dynamic = "force-dynamic";
 
@@ -15,99 +24,167 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const product = await getProduct(session.accountId, id).catch(() => null);
   if (!product) notFound();
-  const brandAssets = await listBrandAssets(id);
-  const recentJobs = await db.select().from(jobs).where(eq(jobs.productId, id)).orderBy(desc(jobs.createdAt)).limit(10);
+  const [brandAssets, counts, recentJobs] = await Promise.all([listBrandAssets(id), libraryCounts(id), listJobs(id, 6)]);
   const logo = brandAssets.find((a) => a.kind === "logo");
   const screens = brandAssets.filter((a) => a.kind === "screenshot");
+  const prefs = product.contentPreferences;
+
+  const prefRows: Array<[string, string]> = [
+    ["Caption preset", prefs.captionPresetId],
+    ["Voice", humanize(prefs.voice)],
+    ["People policy", humanize(prefs.peoplePolicy)],
+    ["Clips per source", String(prefs.clipsPerSource)],
+    ["Clip length", `${prefs.clipLengthSec.min}–${prefs.clipLengthSec.max}s`],
+    ["Hashtags", humanize(prefs.hashtagStrategy)],
+    ["Copy tone", prefs.copyTone],
+    ["Timezone", product.publishing.timezone],
+  ];
 
   return (
-    <>
-      <Nav email={session.email} />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
-        <div className="flex items-start gap-4">
+    <AppShell email={session.email} product={{ id, name: product.product.name }}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-4">
           {logo ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logo.url} alt="" className="h-16 w-16 rounded-xl border border-zinc-200 object-cover" />
+            <img src={logo.url} alt="" className="h-14 w-14 shrink-0 rounded-[10px] border border-hairline bg-surface object-cover" />
           ) : (
-            <span className="h-16 w-16 rounded-xl border border-dashed border-zinc-300" />
+            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-[10px] border border-dashed border-hairline-strong text-lg font-semibold text-faint">{product.product.name.charAt(0)}</span>
           )}
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{product.product.name}</h1>
-            <p className="text-zinc-600">{product.product.tagline}</p>
-            <p className="mt-1 text-xs text-zinc-500">profile v{product.version} · {product.product.category.primary} · {product.product.platforms.join(", ")}</p>
+          <div className="min-w-0">
+            <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">{product.product.name}</h1>
+            <p className="mt-0.5 text-sm text-muted">{product.product.tagline}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+              <span className="rounded-full border border-hairline bg-surface px-2 py-0.5 tabular-nums">v{product.version}</span>
+              <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">{product.product.category.primary}</span>
+              {product.product.platforms.map((p) => (
+                <span key={p} className="rounded-full border border-hairline bg-surface px-2 py-0.5">{p}</span>
+              ))}
+            </div>
           </div>
         </div>
+        <ButtonLink href={`/products/${id}/sources`} variant="primary">
+          Generate shorts
+        </ButtonLink>
+      </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[2fr_1fr]">
-          <div className="space-y-6">
-            <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="font-medium">Features (priority order)</h2>
-              <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm">
-                {product.product.features.map((f) => (
-                  <li key={f.id}><span className="font-medium">{f.title}</span>{f.detail ? <span className="text-zinc-600"> — {f.detail}</span> : null}</li>
+      <div className="mt-8 grid gap-4 sm:grid-cols-3">
+        <StatTile label="In review" value={counts.review} tone="amber" href={`/products/${id}/library?status=review`} hint="Awaiting your approval" />
+        <StatTile label="Approved" value={counts.approved} tone="emerald" href={`/products/${id}/library?status=approved`} hint="Ready to schedule" />
+        <StatTile label="Published" value={counts.published} tone="teal" href={`/products/${id}/library?status=published`} hint={counts.failed > 0 ? `${counts.failed} failed` : `${counts.total} assets total`} />
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[3fr_2fr]">
+        <div className="space-y-6">
+          <Card>
+            <CardHeader title="Features" meta={`${product.product.features.length} · priority order`} />
+            <CardBody>
+              <ol className="divide-y divide-hairline">
+                {product.product.features.map((f, i) => (
+                  <li key={f.id} className="flex gap-3 py-2.5 first:pt-0 last:pb-0">
+                    <span className="w-6 shrink-0 pt-px font-mono text-[12px] tabular-nums text-faint">{String(i + 1).padStart(2, "0")}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{f.title}</p>
+                      {f.detail && <p className="mt-0.5 text-[13px] text-muted">{f.detail}</p>}
+                    </div>
+                  </li>
                 ))}
               </ol>
-              <p className="mt-4 text-sm text-zinc-600"><span className="font-medium text-zinc-800">Audience.</span> {product.product.audience.summary}</p>
-            </section>
+            </CardBody>
+          </Card>
 
-            <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h2 className="font-medium">Screenshots <span className="text-zinc-400">({screens.length})</span></h2>
-                <AssetUploader productId={id} />
-              </div>
+          <Card>
+            <CardHeader title="Audience" />
+            <CardBody>
+              <p className="text-sm leading-relaxed">{product.product.audience.summary}</p>
+              {product.product.audience.painPoints.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {product.product.audience.painPoints.map((p) => (
+                    <span key={p} className="rounded-full border border-hairline bg-canvas px-2 py-0.5 text-[12px] text-muted">{p}</span>
+                  ))}
+                </div>
+              )}
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Screenshots" meta={screens.length} action={<AssetUploader productId={id} />} />
+            <CardBody>
               {screens.length === 0 ? (
-                <p className="mt-3 text-sm text-zinc-600">No screenshots yet.</p>
+                <p className="text-sm text-muted">No screenshots yet. Add them to feed promo films and thumbnails.</p>
               ) : (
-                <ul className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
+                <ul className="grid grid-cols-3 gap-3 sm:grid-cols-5">
                   {screens.map((s) => (
-                    <li key={s.id} className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100">
+                    <li key={s.id} className="overflow-hidden rounded-[8px] border border-hairline bg-canvas">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={s.url} alt="" className="aspect-[9/19] w-full object-cover" />
                     </li>
                   ))}
                 </ul>
               )}
-            </section>
+            </CardBody>
+          </Card>
+        </div>
 
-            <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="font-medium">Content library</h2>
-              <p className="mt-2 text-sm text-zinc-600">Promo cuts, clips, thumbnails and copy appear here as jobs finish. Generation is wired in the next phase.</p>
-            </section>
-          </div>
+        <div className="space-y-6">
+          <PaletteCard productId={id} palette={product.brand.palette} hasAssets={brandAssets.length > 0} />
 
-          <div className="space-y-6">
-            <PaletteCard productId={id} palette={product.brand.palette} hasAssets={brandAssets.length > 0} />
-            <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-              <h2 className="font-medium">Jobs</h2>
+          <Card>
+            <CardHeader title="Content preferences" />
+            <CardBody>
+              <dl className="divide-y divide-hairline text-[13px]">
+                {prefRows.map(([k, v]) => (
+                  <div key={k} className="flex items-baseline justify-between gap-4 py-1.5 first:pt-0 last:pb-0">
+                    <dt className="text-muted">{k}</dt>
+                    <dd className="truncate text-right font-medium tabular-nums">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {[
+                  ["Brand colours", prefs.captionUseBrandColors],
+                  ["Title banner", prefs.titleBanner],
+                  ["B-roll", prefs.broll],
+                  ["SFX", prefs.sfx],
+                  ["End card", prefs.outro],
+                  ["Clean source", prefs.cleanSource],
+                ].map(([label, on]) => (
+                  <span key={String(label)} className={`rounded-full border px-2 py-0.5 text-[11px] ${on ? "border-[#c9e3db] bg-accent-soft text-accent" : "border-hairline text-faint line-through"}`}>
+                    {String(label)}
+                  </span>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Recent jobs"
+              action={
+                <Link href={`/products/${id}/jobs`} className="text-xs text-muted hover:text-ink">
+                  View all
+                </Link>
+              }
+            />
+            <CardBody>
               {recentJobs.length === 0 ? (
-                <p className="mt-2 text-sm text-zinc-600">No jobs yet.</p>
+                <p className="text-sm text-muted">No jobs yet.</p>
               ) : (
-                <ul className="mt-3 space-y-2">
+                <ul className="divide-y divide-hairline">
                   {recentJobs.map((j) => (
-                    <li key={j.id}>
-                      <p className="mb-1 text-xs text-zinc-500">{j.type} · {j.createdAt.toLocaleString()}</p>
-                      <JobProgress
-                        jobId={j.id}
-                        initial={{ status: j.status, progressPct: j.progressPct, currentStep: j.currentStep, attempts: j.attempts, error: (j.error as { message?: string; step?: string | null } | null) ?? null, result: j.result }}
-                      />
+                    <li key={j.id} className="py-3 first:pt-0 last:pb-0">
+                      <p className="mb-1.5 flex items-baseline justify-between gap-3 text-xs">
+                        <span className="font-mono text-ink">{j.type}</span>
+                        <span className="text-faint" title={new Date(j.createdAt).toLocaleString()}>{formatRelative(j.createdAt)}</span>
+                      </p>
+                      <JobProgress compact jobId={j.id} initial={{ status: j.status, progressPct: j.progressPct, currentStep: j.currentStep, attempts: j.attempts, error: j.error, result: j.result }} />
                     </li>
                   ))}
                 </ul>
               )}
-            </section>
-            <section className="rounded-xl border border-zinc-200 bg-white p-5 text-sm shadow-sm">
-              <h2 className="font-medium">Content preferences</h2>
-              <dl className="mt-2 grid grid-cols-2 gap-y-1 text-xs text-zinc-600">
-                <dt>Caption preset</dt><dd>{product.contentPreferences.captionPresetId}</dd>
-                <dt>Voice</dt><dd>{product.contentPreferences.voice}</dd>
-                <dt>People policy</dt><dd>{product.contentPreferences.peoplePolicy}</dd>
-                <dt>Clips per source</dt><dd>{product.contentPreferences.clipsPerSource}</dd>
-                <dt>Timezone</dt><dd>{product.publishing.timezone}</dd>
-              </dl>
-            </section>
-          </div>
+            </CardBody>
+          </Card>
         </div>
-      </main>
-    </>
+      </div>
+    </AppShell>
   );
 }

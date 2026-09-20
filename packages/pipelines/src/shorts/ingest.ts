@@ -1,142 +1,133 @@
-import { rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { PipelineError, newId } from "@distribution/core";
-import { assets, eq, projects, sourceVideos, sql } from "@distribution/db";
+import { assets, eq, sourceVideos, sql } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
-import { bin, classify, downloadArgv, isRetryable, parseDownloadOutput, parseVideoId, parseVideoMeta, probeArgv, probeMedia, run, userMessage, ytdlpAttempts, YoutubeDownloadError } from "@distribution/media";
+import { bin, run, probeMedia, parseVideoId, probeArgv, ytdlpAttempts, parseVideoMeta, downloadArgv, parseDownloadOutput, classify, isRetryable as ytRetryable, userMessage } from "@distribution/media";
 import { getStorage, keys } from "@distribution/storage";
-import { withScratch } from "../common/scratch";
-import { requireProfile } from "../common/profile";
+import { loadProfile, loadSource, withScratch } from "./common";
 import { runCleanSource } from "./sidecars";
 
 /**
- * source.ingest — bring a source video into storage and probe it.
- *  - youtube: validate id → yt-dlp probe (licence → rights) → rights gate → download with
- *    the 5-player-client fallback (youtube.rs run_ytdlp) → optional clean_source → store.
- *  - upload: the file is already in storage; just probe.
- * Chains source.transcribe when the job belongs to a project.
+ * source.ingest — turn a source row into a stored original: probe (title,
+ * licence, rights), enforce the rights gate, download with yt-dlp (the same
+ * player-client fallback as youtube.rs), optionally clean, store, then chain
+ * to transcription. Uploads skip straight to probe + chain.
  */
-export async function sourceIngest(ctx: JobContext<"source.ingest">): Promise<Record<string, unknown>> {
+export async function sourceIngest(ctx: JobContext<"source.ingest">) {
   const { productId, sourceId, projectId } = ctx.payload;
   const db = ctx.db;
   const storage = getStorage();
-  const profile = await requireProfile(db, productId);
-  const src = (await db.select().from(sourceVideos).where(eq(sourceVideos.id, sourceId)).limit(1))[0];
-  if (!src) throw new PipelineError("source not found");
+  const source = await loadSource(db, sourceId);
+  const profile = await loadProfile(db, productId);
   await db.update(sourceVideos).set({ status: "downloading", updatedAt: sql`now()` }).where(eq(sourceVideos.id, sourceId));
 
-  const finish = async (storageKey: string, durationSec: number, probe: Record<string, unknown>) => {
-    await db.transaction(async (tx) => {
-      await tx.update(sourceVideos).set({ status: "ready", storageKey, durationSec, probe, failureReason: null, updatedAt: sql`now()` }).where(eq(sourceVideos.id, sourceId));
-      const head = await storage.head(storageKey);
-      await tx.insert(assets).values({
-        id: newId(),
-        productId,
-        projectId: projectId ?? null,
-        type: "source_original",
-        sourceId,
-        storageKey,
-        mimeType: "video/mp4",
-        width: (probe.width as number | null) ?? null,
-        height: (probe.height as number | null) ?? null,
-        durationSec,
-        sizeBytes: head?.size ?? null,
-        status: "approved",
-        approvalState: "approved",
-        profileVersion: profile.version,
-        jobId: ctx.jobId,
-        metadata: { role: "source" },
-      });
-    });
-    if (projectId) {
-      await ctx.queue.enqueue("source.transcribe", { productId, sourceId, projectId }, { productId, projectId, sourceId, singletonKey: `source.transcribe:${sourceId}:${projectId}` });
-    }
-  };
-
-  try {
-    if (src.kind === "upload" || (src.kind === "connected" && src.storageKey)) {
-      if (!src.storageKey) throw new PipelineError("upload has no storage key");
-      await ctx.progress(20, "probe", "probing uploaded file");
-      const local = await storage.localPathFor(src.storageKey);
-      const probe = await probeMedia(local, { signal: ctx.signal });
-      if (!probe.hasAudio) throw new PipelineError("source has no audio track; nothing to transcribe", { step: "probe" });
-      await finish(src.storageKey, probe.durationSec, probe as unknown as Record<string, unknown>);
-      return { kind: "upload", durationSec: probe.durationSec };
-    }
-
-    if (!src.url) throw new PipelineError("source has no url");
-    const id = parseVideoId(src.url);
-    await ctx.progress(5, "probe", "reading video metadata");
-    const meta = await ytdlpWithFallback(probeArgv(id), ctx, "probe").then((r) => parseVideoMeta(r.stdout));
-    const rights = src.rights === "unknown" && meta.reuseAllowed ? "licensed" : src.rights;
-    await db
-      .update(sourceVideos)
-      .set({ title: meta.title, creator: meta.uploader, durationSec: meta.duration, licenseText: meta.license, rights, externalId: id, platform: "youtube", updatedAt: sql`now()` })
-      .where(eq(sourceVideos.id, sourceId));
-    if (rights === "unknown") {
-      throw new PipelineError(
-        "rights unknown: this video is not Creative Commons and no attestation of permission was recorded. Mark the source as owned or attest permission before processing.",
-        { retrySafe: false, step: "rights", details: { license: meta.license, uploader: meta.uploader } },
-      );
-    }
-    await ctx.event("info", `rights: ${rights}${meta.license ? ` (licence: ${meta.license})` : ""}`, undefined, "rights");
-
-    const maxBytes = Number(process.env.MAX_SOURCE_BYTES ?? 2 * 1024 * 1024 * 1024);
-    const storageKey = keys.sourceOriginal(productId, sourceId, "mp4");
-    const result = await withScratch(`ingest-${sourceId.slice(0, 8)}`, async (dir) => {
-      await ctx.progress(10, "download", `downloading "${meta.title}" (${Math.round(meta.duration)}s)`);
-      const dl = await ytdlpWithFallback(downloadArgv(id, dir), ctx, "download", (line) => {
-        const m = /\[download\]\s+(\d+(?:\.\d+)?)%/.exec(line);
-        if (m) void ctx.progress(10 + Number(m[1]) * 0.6, "download", `downloading ${m[1]}%`);
-      });
-      const file = parseDownloadOutput(dl.stdout);
-      if (!file) throw new PipelineError("yt-dlp printed no output path", { retrySafe: true, step: "download" });
-      const size = (await stat(file)).size;
-      if (size > maxBytes) throw new PipelineError(`source is ${Math.round(size / 1e6)} MB, above MAX_SOURCE_BYTES`, { step: "download" });
-
-      let final = file;
-      if (profile.contentPreferences.cleanSource) {
-        await ctx.progress(72, "clean", "removing burned-in captions and isolating voice");
+  let storageKey = source.storageKey;
+  await withScratch("ingest", async (scratch) => {
+    if (source.kind === "youtube" || (source.url && !storageKey)) {
+      if (!source.url) throw new PipelineError("source has no url", { step: "probe" });
+      const id = parseVideoId(source.url);
+      await ctx.progress(3, "probe", "reading video metadata");
+      let meta: ReturnType<typeof parseVideoMeta> | null = null;
+      let lastErr: unknown;
+      for (const argv of ytdlpAttempts(probeArgv(id))) {
         try {
-          final = await runCleanSource(file, path.join(dir, "clean.mp4"), { signal: ctx.signal, onLog: (l) => void ctx.event("debug", l, undefined, "clean") });
+          const res = await run(bin("yt-dlp"), argv, { timeoutMs: 120_000, signal: ctx.signal, step: "probe" });
+          meta = parseVideoMeta(res.stdout);
+          break;
         } catch (err) {
-          await ctx.event("warn", `clean_source failed soft; using original: ${err instanceof Error ? err.message : err}`, undefined, "clean");
+          lastErr = err;
+          const details = (err as { details?: { stderrTail?: string[] } }).details;
+          const failure = classify((details?.stderrTail ?? []).join("\n"));
+          if (!ytRetryable(failure)) throw new PipelineError(userMessage(failure), { retrySafe: false, step: "probe", cause: err });
         }
       }
-      await ctx.progress(88, "store", "moving into storage");
-      const dest = await storage.localPathFor(storageKey);
-      await rename(final, dest).catch(async () => storage.putFile(storageKey, final));
-      await storage.commit(storageKey);
-      const probe = await probeMedia(dest, { signal: ctx.signal });
-      return { probe, size };
-    });
-    await finish(storageKey, result.probe.durationSec, result.probe as unknown as Record<string, unknown>);
-    return { kind: "youtube", title: meta.title, durationSec: result.probe.durationSec, sizeBytes: result.size, rights };
-  } catch (err) {
-    await db
-      .update(sourceVideos)
-      .set({ status: "failed", failureReason: err instanceof Error ? err.message : String(err), updatedAt: sql`now()` })
-      .where(eq(sourceVideos.id, sourceId));
-    if (projectId) await db.update(projects).set({ status: "failed", updatedAt: sql`now()` }).where(eq(projects.id, projectId));
-    throw err;
-  }
-}
+      if (!meta) throw new PipelineError(`yt-dlp probe failed: ${lastErr instanceof Error ? lastErr.message : lastErr}`, { retrySafe: true, step: "probe" });
 
-/** youtube.rs run_ytdlp: try each player client; only Transient failures advance. */
-async function ytdlpWithFallback(args: string[], ctx: JobContext<"source.ingest">, step: string, onLine?: (l: string) => void) {
-  let last: YoutubeDownloadError | undefined;
-  for (const attempt of ytdlpAttempts(args)) {
-    try {
-      return await run(bin("yt-dlp"), attempt, { timeoutMs: 60 * 60_000, signal: ctx.signal, step, onStderrLine: onLine, onStdoutLine: onLine });
-    } catch (err) {
-      const stderr = err instanceof PipelineError ? ((err.details?.stderrTail as string[] | undefined)?.join("\n") ?? err.message) : String(err);
-      const failure = classify(stderr);
-      last = new YoutubeDownloadError(failure);
-      await ctx.event("warn", `${step}: ${userMessage(failure)} (client ${attempt[1]})`, undefined, step);
-      if (failure.kind !== "Transient") break;
+      // Rights gate (Gate 2 §5): licensed if YouTube says Creative Commons; otherwise the founder's classification stands.
+      const rights = source.rights === "unknown" && meta.reuseAllowed ? "licensed" : source.rights;
+      await db
+        .update(sourceVideos)
+        .set({ title: meta.title, creator: meta.uploader, durationSec: meta.duration, licenseText: meta.license, rights, platform: "youtube", externalId: String(id), updatedAt: sql`now()` })
+        .where(eq(sourceVideos.id, sourceId));
+      if (rights === "unknown") {
+        await db.update(sourceVideos).set({ status: "discovered", failureReason: "Rights unknown: mark the source as owned, licensed, or attest permission before processing.", updatedAt: sql`now()` }).where(eq(sourceVideos.id, sourceId));
+        throw new PipelineError("source blocked: rights unknown (not Creative Commons and no attestation)", { retrySafe: false, step: "rights" });
+      }
+
+      await ctx.progress(8, "download", `downloading "${meta.title}" (${Math.round(meta.duration)}s)`);
+      let downloaded: string | null = null;
+      for (const argv of ytdlpAttempts(downloadArgv(id, scratch))) {
+        try {
+          const res = await run(bin("yt-dlp"), [...argv.slice(0, -1), ...(process.env.YTDLP_MAX_FILESIZE ? ["--max-filesize", process.env.YTDLP_MAX_FILESIZE] : []), argv[argv.length - 1]!], {
+            timeoutMs: 60 * 60_000,
+            signal: ctx.signal,
+            step: "download",
+            onStdoutLine: (line) => {
+              const m = /\[download\]\s+([\d.]+)%/.exec(line);
+              if (m) void ctx.progress(8 + Math.round(Number(m[1]) * 0.6), "download", `downloading ${m[1]}%`);
+            },
+          });
+          downloaded = parseDownloadOutput(res.stdout);
+          if (downloaded) break;
+        } catch (err) {
+          const details = (err as { details?: { stderrTail?: string[] } }).details;
+          const failure = classify((details?.stderrTail ?? []).join("\n"));
+          if (!ytRetryable(failure)) throw new PipelineError(userMessage(failure), { retrySafe: false, step: "download", cause: err });
+          lastErr = err;
+        }
+      }
+      if (!downloaded) throw new PipelineError(`download failed: ${lastErr instanceof Error ? lastErr.message : "no file"}`, { retrySafe: true, step: "download" });
+
+      let finalPath = downloaded;
+      if (profile.contentPreferences.cleanSource) {
+        await ctx.progress(70, "clean", "removing burned-in captions and isolating voice");
+        try {
+          finalPath = await runCleanSource(downloaded, path.join(scratch, "clean.mp4"), { signal: ctx.signal, onLog: (l) => void ctx.event("debug", l, undefined, "clean") });
+        } catch (err) {
+          await ctx.event("warn", `clean step failed soft; using original: ${err instanceof Error ? err.message : err}`, undefined, "clean");
+        }
+      }
+      await ctx.progress(80, "store", "storing original");
+      storageKey = keys.sourceOriginal(productId, sourceId, "mp4");
+      await storage.putFile(storageKey, finalPath, { contentType: "video/mp4" });
     }
-  }
-  throw last ?? new PipelineError(`${step} failed`, { retrySafe: true, step });
-}
+    if (!storageKey) throw new PipelineError("upload has no stored file", { step: "store" });
+  });
 
-export { isRetryable };
+  await ctx.progress(88, "probe", "probing stored media");
+  const local = await storage.localPathFor(storageKey!);
+  const probe = await probeMedia(local, { signal: ctx.signal });
+  if (!probe.hasAudio) throw new PipelineError("source has no audio track; nothing to transcribe", { retrySafe: false, step: "probe" });
+  await db
+    .update(sourceVideos)
+    .set({ status: "ready", storageKey, durationSec: probe.durationSec, probe: probe as unknown as Record<string, unknown>, failureReason: null, updatedAt: sql`now()` })
+    .where(eq(sourceVideos.id, sourceId));
+
+  const existing = await db.select({ id: assets.id }).from(assets).where(sql`${assets.sourceId} = ${sourceId} and ${assets.type} = 'source_original'`).limit(1);
+  if (!existing[0]) {
+    await db.insert(assets).values({
+      id: newId(),
+      productId,
+      projectId: projectId ?? null,
+      type: "source_original",
+      sourceId,
+      storageKey: storageKey!,
+      mimeType: "video/mp4",
+      width: probe.width,
+      height: probe.height,
+      durationSec: probe.durationSec,
+      sizeBytes: probe.sizeBytes,
+      status: "approved",
+      approvalState: "approved",
+      profileVersion: profile.version,
+      jobId: ctx.jobId,
+      metadata: { title: source.title },
+    });
+  }
+
+  if (projectId) {
+    await ctx.queue.enqueue("source.transcribe", { productId, sourceId, projectId }, { productId, projectId, sourceId, singletonKey: `transcribe:${sourceId}` });
+    await ctx.progress(100, "done", "queued transcription");
+  }
+  return { storageKey, durationSec: probe.durationSec };
+}

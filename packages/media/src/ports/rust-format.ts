@@ -34,7 +34,9 @@ export function asU32(x: number): number {
 export function roundAsI64(x: number): number {
   if (Number.isNaN(x)) return 0;
   const r = Math.sign(x) * Math.round(Math.abs(x));
-  const MAX = 9223372036854775807;
+  // eslint-disable-next-line no-loss-of-precision -- mirrors Rust i64::MAX saturation; precision loss is the point
+  // i64::MAX is not representable as a double; 2**63 is the nearest exactly representable value.
+  const MAX = 2 ** 63;
   if (r >= MAX) return MAX;
   if (r <= -MAX - 1) return -MAX - 1;
   return r === 0 ? 0 : r;

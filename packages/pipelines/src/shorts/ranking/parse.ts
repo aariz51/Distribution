@@ -198,11 +198,11 @@ export function parseCandidateJson(
   } catch (directErr) {
     // Fall back to carving the JSON out of surrounding prose.
     const span = extractJsonSpan(trimmed);
-    if (span === null) throw new Error(`parsing candidate JSON: ${errorMessage(directErr)}`);
+    if (span === null) throw new Error(`parsing candidate JSON: ${errorMessage(directErr)}`, { cause: directErr });
     try {
       val = JSON.parse(span);
     } catch (spanErr) {
-      throw new Error(`parsing candidate JSON: ${errorMessage(spanErr)}`);
+      throw new Error(`parsing candidate JSON: ${errorMessage(spanErr)}`, { cause: spanErr });
     }
   }
 
@@ -346,7 +346,7 @@ export function parseCopy(text: string): CreativeCopy {
     try {
       value = JSON.parse(candidate);
     } catch (err) {
-      throw new Error(`parsing creative copy JSON: ${errorMessage(err)}`);
+      throw new Error(`parsing creative copy JSON: ${errorMessage(err)}`, { cause: err });
     }
   }
 
