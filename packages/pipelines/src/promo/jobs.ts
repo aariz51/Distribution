@@ -204,7 +204,11 @@ export async function promoRender(ctx: JobContext<"promo.render">) {
   await ctx.progress(94, "poster", "grabbing a poster frame");
   const posterKey = keys.promo(projectId, `out/${deliverable.type}.png`);
   const posterPath = await storage.localPathFor(posterKey);
-  const posterAt = (res.durationInFrames / res.fps) * 0.25;
+  // A poster should be the film's best-held frame, not whatever 25% lands on.
+  // The longest scene is the one the director gave the most room, so sample its
+  // middle; that is the money shot in every structure the director can choose.
+  const longest = [...params.storyboard.scenes].sort((a, b) => b.duration - a.duration)[0];
+  const posterAt = longest ? (longest.start + longest.duration / 2) / res.fps : (res.durationInFrames / res.fps) * 0.25;
   await run(bin("ffmpeg"), ["-v", "error", "-y", "-ss", posterAt.toFixed(3), "-i", outPath, "-frames:v", "1", posterPath], { timeoutMs: 120_000, step: "poster" }).catch(() => undefined);
   const probe = await probeMedia(outPath, { signal: ctx.signal });
 

@@ -170,7 +170,9 @@ const Press: React.FC<SceneProps> = ({ scene }) => {
           />
         )}
         <ActionButton size={btnSize} label={c(scene, "buttonLabel", "START")} color={accent} press={press} glowStrength={0.5 + press * 0.5} />
-        <Cursor x={width * 0.5 + btnSize * 0.1} y={height * 0.5 + btnSize * 0.08} scale={wide ? 1.4 : 1.8} pressed={press} />
+        {/* Clear of the label: the cursor sits on the button's lower-right
+            shoulder so it reads as pressing the control, not covering it. */}
+        <Cursor x={width * 0.5 + btnSize * 0.26} y={height * 0.5 + btnSize * 0.2} scale={wide ? 1.4 : 1.8} pressed={press} />
       </AbsoluteFill>
       <Bloom frame={frame} peak={scene.duration - 3} rise={6} fall={3} color={theme.colors.white} />
     </AbsoluteFill>

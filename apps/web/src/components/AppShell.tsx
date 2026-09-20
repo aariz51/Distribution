@@ -25,11 +25,11 @@ export function AppShell({ email, product, children }: { email: string; product?
       <header className="sticky top-0 z-30 border-b border-hairline bg-surface/95 backdrop-blur-[2px]">
         <div className="mx-auto flex h-14 w-full max-w-[1200px] items-center justify-between px-6">
           <div className="flex min-w-0 items-center gap-1 text-sm">
-            <Link href="/" className="rounded-[6px] px-1.5 py-1 text-ink hover:bg-canvas">
+            <Link href="/products" className="rounded-[6px] px-1.5 py-1 text-ink hover:bg-canvas">
               <Wordmark />
             </Link>
             <span className="mx-1 h-4 w-px bg-hairline" aria-hidden />
-            <Link href="/" className="rounded-[6px] px-2 py-1 text-muted motion-safe:transition-colors hover:bg-canvas hover:text-ink">
+            <Link href="/products" className="rounded-[6px] px-2 py-1 text-muted motion-safe:transition-colors hover:bg-canvas hover:text-ink">
               Products
             </Link>
             {product && (

@@ -22,7 +22,7 @@ export default function LoginPage() {
       setError(res.status === 401 ? "Wrong password." : `Sign-in failed (${res.status}).`);
       return;
     }
-    router.push("/");
+    router.push("/products");
     router.refresh();
   }
 

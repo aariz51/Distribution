@@ -31,6 +31,7 @@ export interface AssetItem {
   scheduledFor?: string | null;
   failureReason?: string | null;
   candidate?: { hook: string; score: number; startSec: number; endSec: number; rank: number } | null;
+  metadata?: Record<string, unknown> | null;
   copy: CopyItem[];
 }
 

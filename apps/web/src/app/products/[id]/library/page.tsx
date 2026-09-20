@@ -9,7 +9,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pill } from "@/components/ui/Pill";
 import { FilterPills } from "@/components/ui/Tabs";
-import { formatDuration, formatRelative, isLandscapeType, typeLabel } from "@/components/ui/format";
+import { formatDuration, formatRelative, isLandscapeType, assetLabel } from "@/components/ui/format";
 
 export const dynamic = "force-dynamic";
 
@@ -80,7 +80,7 @@ function AssetCard({ asset: a, platforms }: { asset: AssetView; platforms: strin
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-[12px] font-medium text-muted">{typeLabel(a.type)}</p>
+            <p className="text-[12px] font-medium text-muted">{assetLabel(a.type, a.metadata)}</p>
             {a.candidate?.hook ? <p className="mt-0.5 line-clamp-2 text-sm font-medium leading-snug">{a.candidate.hook}</p> : <p className="mt-0.5 font-mono text-[12px] text-faint">{a.id.slice(0, 8)}</p>}
           </div>
           <Pill status={a.status} />

@@ -66,6 +66,19 @@ export function typeLabel(t: string): string {
   return TYPE_LABELS[t] ?? humanize(t);
 }
 
+/**
+ * A promo project produces both the full-length store render and a trimmed cut
+ * that satisfies Apple's ≤30s / 30fps rule. They share a type, so without this
+ * the two are indistinguishable in the library and a founder cannot tell which
+ * one is safe to upload.
+ */
+export function assetLabel(type: string, metadata?: Record<string, unknown> | null): string {
+  const base = typeLabel(type);
+  if (metadata?.appStoreCut) return `${base} · App Store cut`;
+  if (metadata?.poster) return "Poster frame";
+  return base;
+}
+
 export function isLandscapeType(t: string): boolean {
   return t === "promo_landscape" || t === "promo_store_landscape" || t === "thumbnail";
 }
