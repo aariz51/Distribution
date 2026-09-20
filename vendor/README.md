@@ -12,6 +12,13 @@ visible and upstream fixes can be re-applied.
 | `b-rolls/` | `~/b-rolls-ref` (aariz51/b-rolls) | `912c3a3` 2026-08-13 | Aariz's repo (no LICENSE file) | B-roll enrichment scripts |
 | `video-use/` | browser-use/video-use pinned by b-rolls | `92c2b34e` | MIT | render helpers used by b-rolls |
 
+Adapted files (small, marked `Distribution adaptation` in the source; everything else is byte-identical to the origin):
+
+| File | Change | Why |
+|---|---|---|
+| `autoshorts-py/assets/captions.py` | accepts `style_overrides` in the stdin spec (textColor/highlightColor/strokeColor/backgroundColor) | brand colours drive captions (brief §3) |
+| `autoshorts-py/assets/title_bar.py` | `--fill` / `--stroke` hex flags | brand colours drive title bars |
+
 Rules:
 - Do not import from `vendor/` into app code directly; go through the wrappers in `packages/pipelines`.
 - The `vendor/promo-video/template` folder is the *starting point* for the prop-driven kit in

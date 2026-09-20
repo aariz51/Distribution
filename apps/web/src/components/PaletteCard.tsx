@@ -11,16 +11,22 @@ export function PaletteCard({ productId, palette, hasAssets }: { productId: stri
 
   async function save(next: Palette) {
     setBusy("Saving…");
-    await fetch(`/api/products/${productId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ palette: next }) });
-    setP(next);
-    setBusy(null);
-    router.refresh();
+    try {
+      const r = await fetch(`/api/products/${productId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ palette: next }) });
+      if (r.ok) setP(next);
+    } finally {
+      setBusy(null);
+      router.refresh();
+    }
   }
   async function resample() {
     setBusy("Queuing…");
-    await fetch(`/api/products/${productId}/jobs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "brand.palette" }) });
-    setBusy(null);
-    router.refresh();
+    try {
+      await fetch(`/api/products/${productId}/jobs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "brand.palette" }) });
+    } finally {
+      setBusy(null);
+      router.refresh();
+    }
   }
 
   const roles: (keyof Pick<Palette, "accent" | "ink" | "canvas" | "ground">)[] = ["accent", "ink", "canvas", "ground"];

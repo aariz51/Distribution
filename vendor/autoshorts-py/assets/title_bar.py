@@ -229,11 +229,27 @@ def render_banner(text: str, width: int, height: int, limit_y: int) -> "object":
         # Shadow first, slightly offset, to lift the type off busy footage.
         d.text((x + stroke * 0.9, y + stroke * 0.9), line, font=font,
                fill=(0, 0, 0, 140))
-        d.text((x, y), line, font=font, fill=(255, 255, 255, 255),
-               stroke_width=stroke, stroke_fill=(0, 0, 0, 235))
+        d.text((x, y), line, font=font, fill=TITLE_FILL,
+               stroke_width=stroke, stroke_fill=TITLE_STROKE)
         y += line_h
 
     return overlay, top_y + plate_h
+
+
+TITLE_FILL = (255, 255, 255, 255)
+TITLE_STROKE = (0, 0, 0, 235)
+
+
+def _hex_rgba(value, default, alpha=255):
+    try:
+        v = str(value).strip().lstrip("#")
+        if len(v) == 3:
+            v = "".join(c * 2 for c in v)
+        if len(v) != 6:
+            return default
+        return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16), alpha)
+    except Exception:
+        return default
 
 
 def main() -> int:
@@ -243,7 +259,16 @@ def main() -> int:
     ap.add_argument("--output")
     ap.add_argument("--assets", default=str(Path(__file__).parent))
     ap.add_argument("--png-only", help="write the overlay PNG here and stop")
+    # Distribution adaptation: brand colours for the title text. Defaults keep
+    # the original white-on-black look.
+    ap.add_argument("--fill", help="text colour as #RRGGBB (default white)")
+    ap.add_argument("--stroke", help="outline colour as #RRGGBB (default black)")
     args = ap.parse_args()
+    global TITLE_FILL, TITLE_STROKE
+    if args.fill:
+        TITLE_FILL = _hex_rgba(args.fill, TITLE_FILL)
+    if args.stroke:
+        TITLE_STROKE = _hex_rgba(args.stroke, TITLE_STROKE, alpha=235)
 
     video = Path(args.video).expanduser().resolve()
     if not video.exists():

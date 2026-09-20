@@ -46,6 +46,21 @@ STYLES = {
 }
 
 
+def _hex_rgba(value, default):
+    """#RGB / #RRGGBB / #RRGGBBAA -> RGBA tuple; anything else keeps `default`."""
+    try:
+        v = str(value).strip().lstrip("#")
+        if len(v) == 3:
+            v = "".join(c * 2 for c in v)
+        if len(v) == 6:
+            v += "ff"
+        if len(v) != 8:
+            return default
+        return tuple(int(v[i:i + 2], 16) for i in (0, 2, 4, 6))
+    except Exception:
+        return default
+
+
 def pick_font(size):
     from PIL import ImageFont
 
@@ -201,6 +216,25 @@ def main():
               file=sys.stderr)
 
     style = STYLES.get(requested, STYLES["modern-box"])
+
+    # Distribution adaptation: the product profile may override the preset's
+    # colours (brand palette). Studio presets read these keys directly; the
+    # legacy built-in styles map textColor/strokeColor/backgroundColor onto
+    # fill/stroke/box. Empty values are ignored so a partial override is safe.
+    overrides = {k: v for k, v in (spec.get("style_overrides") or {}).items() if v}
+    if overrides:
+        if studio:
+            merged = dict(studio[1])
+            merged.update(overrides)
+            studio = (studio[0], merged)
+        else:
+            style = dict(style)
+            if "textColor" in overrides:
+                style["fill"] = _hex_rgba(overrides["textColor"], style["fill"])
+            if "strokeColor" in overrides:
+                style["stroke"] = _hex_rgba(overrides["strokeColor"], style.get("stroke") or (0, 0, 0, 255))
+            if "backgroundColor" in overrides:
+                style["box"] = _hex_rgba(overrides["backgroundColor"], style.get("box") or (0, 0, 0, 176))
 
     if width <= 0 or height <= 0 or duration <= 0 or not chunks:
         print("nothing to render", file=sys.stderr)
