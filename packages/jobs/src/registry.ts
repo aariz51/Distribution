@@ -58,13 +58,33 @@ export const JOB_TYPES = {
     queue: "publish",
     payload: z.object({ scheduleId: z.uuid() }),
   },
+  "shorts.enrich": {
+    queue: "media",
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), assetId: z.uuid(), steps: z.array(z.enum(["broll", "sfx", "outro"])).min(1) }),
+  },
   "promo.run": {
     queue: "llm",
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), referenceUrl: z.string().optional(), referenceId: z.uuid().optional(), durationSec: z.number().min(15).max(90).default(33) }),
+  },
+  "promo.analyze_reference": {
+    queue: "llm",
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), referenceUrl: z.string().optional(), referenceId: z.uuid().optional() }),
+  },
+  "promo.storyboard": {
+    queue: "llm",
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid() }),
+  },
+  "promo.build": {
+    queue: "render",
     payload: z.object({ productId: z.uuid(), projectId: z.uuid() }),
   },
   "promo.render": {
     queue: "render",
-    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), composition: z.string() }),
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), composition: z.enum(["PromoVertical", "PromoLandscape", "PromoStorePortrait", "PromoStoreLandscape"]) }),
+  },
+  "promo.finalize": {
+    queue: "media",
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid() }),
   },
 } as const satisfies Record<string, { queue: QueueName; payload: z.ZodType }>;
 

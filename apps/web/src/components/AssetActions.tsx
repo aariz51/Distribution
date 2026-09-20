@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/Field";
 import { Pill } from "@/components/ui/Pill";
 import { cn } from "@/components/ui/cn";
 
-const DEFAULT_PLATFORMS = ["instagram", "x", "youtube", "linkedin", "tiktok"];
+const DEFAULT_PLATFORMS = ["instagram", "tiktok", "youtube", "x", "linkedin"];
 
 async function readError(r: Response): Promise<string> {
   try {
@@ -27,17 +27,21 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
   const choices = platforms.length ? platforms : DEFAULT_PLATFORMS;
   const [picked, setPicked] = useState<string[]>(choices);
 
-  async function approve(state: "approved" | "rejected") {
+  type Action = "approve" | "reject" | "archive" | "restore";
+  // The route accepts {action}; the documented contract is {approvalState}. Send both — zod strips unknown keys.
+  const APPROVAL_STATE: Record<Action, "approved" | "rejected" | "pending"> = { approve: "approved", reject: "rejected", archive: "rejected", restore: "pending" };
+
+  async function act(action: Action) {
     let reason: string | undefined;
-    if (state === "rejected") {
-      const r = window.prompt("Why is this asset rejected? (optional)");
+    if (action === "reject") {
+      const r = window.prompt("Why is this asset rejected? (optional, stored with the asset)");
       if (r === null) return;
       reason = r.trim() || undefined;
     }
-    setBusy(state);
+    setBusy(action);
     setError(null);
     try {
-      const r = await fetch(`/api/assets/${asset.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ approvalState: state, ...(reason ? { reason } : {}) }) });
+      const r = await fetch(`/api/assets/${asset.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, approvalState: APPROVAL_STATE[action], ...(reason ? { reason } : {}) }) });
       if (!r.ok) throw new Error(await readError(r));
       router.refresh();
     } catch (e) {
@@ -52,7 +56,7 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
     setBusy("copy");
     setError(null);
     try {
-      const r = await fetch(`/api/assets/${asset.id}/copy`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ platforms: picked }) });
+      const r = await fetch(`/api/assets/${asset.id}/copy`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ regenerate: true, platforms: picked }) });
       if (!r.ok) throw new Error(await readError(r));
       setCopyOpen(false);
       setOpen(true);
@@ -64,20 +68,30 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
     }
   }
 
-  const pending = asset.approvalState === "pending";
-  const canDecide = asset.status !== "archived" && asset.status !== "published" && asset.status !== "publishing";
+  const archived = asset.status === "archived";
+  const locked = asset.status === "published" || asset.status === "publishing" || asset.status === "scheduled";
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-1.5">
-        {canDecide && (pending || asset.approvalState === "rejected") && (
-          <Button size="sm" variant="primary" loading={busy === "approved"} disabled={busy !== null} onClick={() => approve("approved")}>
+        {!archived && !locked && asset.status !== "approved" && (
+          <Button size="sm" variant="primary" loading={busy === "approve"} disabled={busy !== null} onClick={() => act("approve")}>
             Approve
           </Button>
         )}
-        {canDecide && (pending || asset.approvalState === "approved") && (
-          <Button size="sm" variant={pending ? "secondary" : "danger"} loading={busy === "rejected"} disabled={busy !== null} onClick={() => approve("rejected")}>
+        {!archived && !locked && (
+          <Button size="sm" variant={asset.status === "approved" ? "danger" : "secondary"} loading={busy === "reject"} disabled={busy !== null} onClick={() => act("reject")}>
             Reject
+          </Button>
+        )}
+        {archived && (
+          <Button size="sm" loading={busy === "restore"} disabled={busy !== null} onClick={() => act("restore")}>
+            Restore to review
+          </Button>
+        )}
+        {!archived && (asset.status === "failed" || asset.status === "approved") && (
+          <Button size="sm" variant="ghost" loading={busy === "archive"} disabled={busy !== null} onClick={() => act("archive")}>
+            Archive
           </Button>
         )}
         <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setCopyOpen((o) => !o)} aria-expanded={copyOpen}>

@@ -14,10 +14,13 @@ export function SourceRow({ productId, source: s }: { productId: string; source:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const runnable = s.status === "ready" || s.status === "queued";
+  const rightsUnknown = s.rights === "unknown";
+  const runnable = (s.status === "ready" || s.status === "queued") && !rightsUnknown;
   const runActive = s.latestProject && !["completed", "failed", "cancelled", "published", "archived"].includes(s.latestProject.status);
   const why = !runnable
-    ? s.status === "failed"
+    ? rightsUnknown
+      ? "Set rights before processing"
+      : s.status === "failed"
       ? "Source failed to ingest"
       : s.status === "downloading"
         ? "Still downloading"
