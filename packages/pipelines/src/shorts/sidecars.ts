@@ -28,6 +28,8 @@ export interface SidecarOptions {
   timeoutMs?: number;
   onLog?: (line: string) => void;
   step?: string;
+  /** Extra environment for the sidecar (merged over process.env). */
+  env?: Record<string, string | undefined>;
 }
 
 /** Run a sidecar; stderr `[tag]` lines are forwarded to onLog; stdout's last non-empty line is returned. */
@@ -40,7 +42,7 @@ export async function runSidecar(script: string, args: string[], opts: SidecarOp
     input: opts.input,
     step: opts.step ?? script,
     cwd: assetsDir(),
-    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    env: { ...process.env, ...(opts.env ?? {}), PYTHONUNBUFFERED: "1" },
     onStderrLine: (line) => {
       if (opts.onLog && /^\[[a-z]+\]/.test(line)) opts.onLog(line);
     },
@@ -111,8 +113,9 @@ export async function ensureSfxKit(kitDir: string, opts: SidecarOptions = {}): P
   return kitDir;
 }
 
-export async function runSfxMix(video: string, kitDirs: string[], output: string, opts: SidecarOptions & { transcriptJson?: string } = {}): Promise<string> {
+export async function runSfxMix(video: string, kitDirs: string[], output: string, opts: SidecarOptions & { transcriptJson?: string; scenes?: string } = {}): Promise<string> {
   const args = ["--video", video, "--kit", kitDirs.join(","), "--output", output];
+  if (opts.scenes) args.push("--scenes", opts.scenes);
   if (opts.transcriptJson) args.push("--transcript", opts.transcriptJson);
   const { lastLine } = await runSidecar("sfx_mix.py", args, { ...opts, step: "sfx", timeoutMs: opts.timeoutMs ?? 20 * 60_000 });
   return outputPath(lastLine, output, "sfx");
@@ -148,13 +151,20 @@ export async function runCreative(spec: { frame: string; headline: string; kicke
   return outputPath(lastLine, spec.out, "creative");
 }
 
+/** A path that never exists: makes outro.py skip voice cloning cleanly. An empty
+ *  string would not — Python's `Path("").exists()` is True and the spawn crashes. */
+export const NO_TTS_PYTHON = "/nonexistent/tts-python";
+/** `--line` for a silent end card: outro.py has no "no voice" switch and `--line ""`
+ *  falls back to the default line, so a whitespace line is spoken (≈ nothing). */
+export const SILENT_OUTRO_LINE = " ";
+
 /** outro.py — branded end card (+ optional cloned voice line). */
 export async function runOutro(clip: string, appName: string, output: string, opts: SidecarOptions & { logo?: string; transcriptJson?: string; line?: string; ttsPython?: string } = {}): Promise<string> {
   const args = ["--clip", clip, "--app-name", appName, "--output", output, "--assets", assetsDir()];
   if (opts.logo) args.push("--logo", opts.logo);
   if (opts.transcriptJson) args.push("--transcript", opts.transcriptJson);
   if (opts.line) args.push("--line", opts.line);
-  args.push("--tts-python", opts.ttsPython ?? process.env.TTS_PYTHON_BIN ?? "");
+  args.push("--tts-python", opts.ttsPython || process.env.TTS_PYTHON_BIN || NO_TTS_PYTHON);
   const { lastLine } = await runSidecar("outro.py", args, { ...opts, step: "outro", timeoutMs: opts.timeoutMs ?? 30 * 60_000 });
   return outputPath(lastLine, output, "outro");
 }
@@ -165,4 +175,60 @@ export async function runCleanSource(video: string, output: string, opts: Sideca
   if (opts.audioClean === false) args.push("--no-audio-clean");
   const { lastLine } = await runSidecar("clean_source.py", args, { ...opts, step: "clean", timeoutMs: opts.timeoutMs ?? 90 * 60_000 });
   return outputPath(lastLine, output, "clean");
+}
+
+// ─── B-roll ──────────────────────────────────────────────────────────────────
+
+export type PeoplePolicy = "off" | "no-people" | "no-women";
+
+export interface BrollOptions extends SidecarOptions {
+  /** Steers scene selection; the Rust caller passed the candidate hook. */
+  topic: string;
+  /** Clip-relative `{"words":[{text,start,end}]}` JSON (see `rebaseWords`). Optional. */
+  transcriptJsonPath?: string;
+  output: string;
+  /** b-rolls skill checkout. Default `BROLLS_SKILL_DIR` → `vendor/b-rolls`. */
+  skillDir?: string;
+  /** Always passed: the script's own default is `no-women`. */
+  peoplePolicy: PeoplePolicy;
+  /** Parent of the pinned `video-use-<sha12>` checkout (`B_ROLLS_CACHE_DIR`); default `~/.cache/b-rolls`. */
+  videoUseCacheDir?: string;
+}
+
+export function brollSkillDir(): string {
+  return process.env.BROLLS_SKILL_DIR ?? path.resolve(here, "../../../../vendor/b-rolls");
+}
+
+/** Pure argv builder — mirrors `broll.rs:141-156` exactly. */
+export function brollArgv(clip: string, opts: Pick<BrollOptions, "topic" | "transcriptJsonPath" | "output" | "skillDir">, assets = assetsDir()): string[] {
+  const args = ["--clip", clip, "--topic", opts.topic, "--skill-dir", opts.skillDir ?? brollSkillDir(), "--output", opts.output, "--assets", assets];
+  if (opts.transcriptJsonPath) args.push("--transcript", opts.transcriptJsonPath);
+  return args;
+}
+
+/** Pure env builder: policy is explicit; API keys pass through from `base`. */
+export function brollEnv(opts: Pick<BrollOptions, "peoplePolicy" | "videoUseCacheDir">, base: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { BROLL_PEOPLE_POLICY: opts.peoplePolicy };
+  for (const k of ["PEXELS_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"]) if (base[k]) env[k] = base[k];
+  const cache = opts.videoUseCacheDir ?? base.B_ROLLS_CACHE_DIR;
+  if (cache) env.B_ROLLS_CACHE_DIR = cache;
+  return env;
+}
+
+/** broll_pipeline.py — plans scenes with the LLM, sources Pexels/Wikimedia clips,
+ *  renders through the pinned video-use checkout. Writes `edit_<stem>/scene_plan.json`
+ *  beside the clip, so callers should pass a clip that lives in scratch. */
+export async function runBroll(clip: string, opts: BrollOptions): Promise<string> {
+  const { lastLine } = await runSidecar("broll_pipeline.py", brollArgv(clip, opts), {
+    ...opts,
+    step: "broll",
+    timeoutMs: opts.timeoutMs ?? 60 * 60_000,
+    env: { ...(opts.env ?? {}), ...brollEnv(opts) },
+  });
+  return outputPath(lastLine, opts.output, "broll");
+}
+
+/** Where broll_pipeline.py leaves its scene plan for `clip` (consumed by sfx_mix.py --scenes). */
+export function brollScenePlanPath(clip: string): string {
+  return path.join(path.dirname(clip), `edit_${path.basename(clip, path.extname(clip))}`, "scene_plan.json");
 }

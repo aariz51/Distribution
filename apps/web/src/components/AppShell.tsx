@@ -56,6 +56,7 @@ export function AppShell({ email, product, children }: { email: string; product?
                 { label: "Library", href: `/products/${product.id}/library` },
                 { label: "Sources", href: `/products/${product.id}/sources` },
                 { label: "Jobs", href: `/products/${product.id}/jobs` },
+                { label: "Publish", href: `/products/${product.id}/publish` },
               ]}
             />
           </div>

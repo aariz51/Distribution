@@ -8,6 +8,7 @@ import { getStorage, keys } from "@distribution/storage";
 import { loadProfile, loadSource, paletteOf, withScratch, transcriptTextBetween } from "./common";
 import { runCaptions, runFacetrack, runTitleBar } from "./sidecars";
 import { TITLE_PROMPT, fallbackTitle, fillPrompt } from "./ranking";
+import { enrichStepsFor } from "./enrich";
 
 const DELIVERY = { w: 1080, h: 1920 };
 
@@ -143,6 +144,10 @@ export async function shortsCut(ctx: JobContext<"shorts.cut">) {
   });
 
   await ctx.queue.enqueue("shorts.thumbnail", { productId, projectId, assetId: result.assetId }, { productId, projectId, assetId: result.assetId, singletonKey: `thumb:${result.assetId}` });
+  const steps = enrichStepsFor(prefs);
+  if (steps.length) {
+    await ctx.queue.enqueue("shorts.enrich", { productId, projectId, assetId: result.assetId, steps }, { productId, projectId, assetId: result.assetId, singletonKey: `enrich:${result.assetId}` });
+  }
   const platforms = profile.publishing.cadence.map((c) => c.platform);
   await ctx.queue.enqueue("copy.generate", { productId, assetId: result.assetId, platforms: platforms.length ? [...new Set(platforms)] : ["instagram", "x", "youtube", "linkedin", "tiktok"] }, { productId, assetId: result.assetId, singletonKey: `copy:${result.assetId}` });
   await db.execute(sql`update projects set status = case when exists (select 1 from candidates c join assets a on a.candidate_id = c.id where c.project_id = ${projectId} and c.selected) then 'completed' else status end, updated_at = now() where id = ${projectId}`);

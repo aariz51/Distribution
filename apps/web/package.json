@@ -24,7 +24,8 @@
     "zod": "^4.6.5",
     "@distribution/media": "workspace:*",
     "@distribution/pipelines": "workspace:*",
-    "@distribution/providers": "workspace:*"
+    "@distribution/providers": "workspace:*",
+    "@distribution/publishing": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

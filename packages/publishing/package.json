@@ -1,0 +1,24 @@
+{
+  "name": "@distribution/publishing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "list-channels": "tsx scripts/list-channels.ts"
+  },
+  "dependencies": {
+    "@distribution/core": "workspace:*",
+    "@distribution/media": "workspace:*",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "dotenv": "^18.0.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  }
+}
