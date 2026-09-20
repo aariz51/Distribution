@@ -1,0 +1,5 @@
+{
+  "buildCommand": "cd ../.. && pnpm --filter @distribution/web build",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile=false",
+  "framework": "nextjs"
+}
