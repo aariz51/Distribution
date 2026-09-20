@@ -1,3 +1,3 @@
-export * from "./exec.js";
-export * from "./probe.js";
-export * from "./palette.js";
+export * from "./exec";
+export * from "./probe";
+export * from "./palette";

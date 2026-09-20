@@ -1,3 +1,3 @@
-export * from "./registry.js";
-export * from "./progress.js";
-export * from "./queue.js";
+export * from "./registry";
+export * from "./progress";
+export * from "./queue";

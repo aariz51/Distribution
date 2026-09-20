@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ApprovalState, AssetStatus, AssetType, Platform } from "../statuses.js";
+import { ApprovalState, AssetStatus, AssetType, Platform } from "../statuses";
 
 export const AssetRecord = z.object({
   id: z.uuid(),

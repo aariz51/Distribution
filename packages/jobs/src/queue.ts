@@ -11,8 +11,8 @@ import {
   type JobEnvelope,
   type JobPayload,
   type JobTypeName,
-} from "./registry.js";
-import { createProgressWriter, type ProgressWriter } from "./progress.js";
+} from "./registry";
+import { createProgressWriter, type ProgressWriter } from "./progress";
 
 export interface EnqueueOptions {
   productId?: string;

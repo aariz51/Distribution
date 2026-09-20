@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { inferPalette, kmeans } from "../palette.js";
+import { inferPalette, kmeans } from "../palette";
 
 async function solid(r: number, g: number, b: number, w = 40, h = 40) {
   return sharp({ create: { width: w, height: h, channels: 3, background: { r, g, b } } }).png().toBuffer();

@@ -2,8 +2,8 @@ import { createReadStream } from "node:fs";
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import type { PutOptions, StorageAdapter, StoredObject } from "./adapter.js";
-import { assertValidKey } from "./keys.js";
+import type { PutOptions, StorageAdapter, StoredObject } from "./adapter";
+import { assertValidKey } from "./keys";
 
 const MIME_BY_EXT: Record<string, string> = {
   mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm", m4a: "audio/mp4", mp3: "audio/mpeg",

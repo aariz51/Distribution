@@ -1,5 +1,5 @@
 import type { JobQueue } from "@distribution/jobs";
-import { brandPalette } from "./brand/palette.js";
+import { brandPalette } from "./brand/palette";
 
 export { brandPalette };
 

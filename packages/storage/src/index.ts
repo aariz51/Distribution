@@ -1,10 +1,10 @@
 import path from "node:path";
-import type { StorageAdapter } from "./adapter.js";
-import { LocalStorage } from "./local.js";
+import type { StorageAdapter } from "./adapter";
+import { LocalStorage } from "./local";
 
-export * from "./adapter.js";
-export * from "./keys.js";
-export * from "./local.js";
+export * from "./adapter";
+export * from "./keys";
+export * from "./local";
 
 let instance: StorageAdapter | undefined;
 

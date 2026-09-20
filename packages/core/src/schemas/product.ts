@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Platform, RightsClass } from "../statuses.js";
+import { Platform, RightsClass } from "../statuses";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "expected #RRGGBB");
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { bin, run } from "./exec.js";
+import { bin, run } from "./exec";
 
 /** Port of autoshorts `media.rs:86-149` probe_media, same field semantics. */
 export const MediaProbe = z.object({

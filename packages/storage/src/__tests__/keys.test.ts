@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertValidKey, keys } from "../keys.js";
+import { assertValidKey, keys } from "../keys";
 
 describe("storage keys", () => {
   it("accepts generated keys", () => {

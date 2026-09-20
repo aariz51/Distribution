@@ -44,7 +44,7 @@ export function kmeans(pixels: Rgb[], k: number, iterations = 12): { center: Rgb
     const p = sorted[Math.floor(((i + 0.5) / k) * sorted.length)]!;
     return [p[0], p[1], p[2]];
   });
-  let assign = new Array<number>(pixels.length).fill(0);
+  const assign = new Array<number>(pixels.length).fill(0);
   for (let it = 0; it < iterations; it++) {
     for (let i = 0; i < pixels.length; i++) {
       let best = 0;
