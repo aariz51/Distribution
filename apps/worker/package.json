@@ -1,0 +1,20 @@
+{
+  "name": "@distribution/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@distribution/core": "workspace:*",
+    "@distribution/db": "workspace:*",
+    "@distribution/jobs": "workspace:*",
+    "@distribution/pipelines": "workspace:*",
+    "@distribution/storage": "workspace:*",
+    "dotenv": "^18.0.1"
+  },
+  "devDependencies": { "@types/node": "^26.6.2", "tsx": "^4.23.15", "typescript": "^5.9.3" }
+}

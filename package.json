@@ -32,7 +32,9 @@
       "sharp",
       "@remotion/compositor-darwin-arm64",
       "@remotion/compositor-linux-x64-gnu",
-      "@remotion/compositor-linux-arm64-gnu"
+      "@remotion/compositor-linux-arm64-gnu",
+      "argon2",
+      "unrs-resolver"
     ]
   },
   "type": "module"

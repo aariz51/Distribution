@@ -1,0 +1,10 @@
+{
+  "name": "@distribution/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "@distribution/core": "workspace:*" },
+  "devDependencies": { "@types/node": "^26.6.2", "typescript": "^5.9.3", "vitest": "^5.0.1" }
+}

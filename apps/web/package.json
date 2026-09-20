@@ -1,0 +1,35 @@
+{
+  "name": "@distribution/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "@distribution/core": "workspace:*",
+    "@distribution/db": "workspace:*",
+    "@distribution/jobs": "workspace:*",
+    "@distribution/storage": "workspace:*",
+    "zod": "^4.6.5",
+    "argon2": "^0.45.1",
+    "jose": "^6.2.12",
+    "sharp": "^0.35.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.5",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

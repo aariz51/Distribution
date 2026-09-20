@@ -1,0 +1,23 @@
+{
+  "name": "@distribution/scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@distribution/core": "workspace:*",
+    "@distribution/db": "workspace:*",
+    "@distribution/jobs": "workspace:*",
+    "@distribution/media": "workspace:*",
+    "@distribution/storage": "workspace:*",
+    "dotenv": "^18.0.1",
+    "sharp": "^0.35.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
