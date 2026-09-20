@@ -1,0 +1,9 @@
+# Separate Python 3.11 environment for tts_clone.py (Chatterbox voice clone).
+# Chatterbox does not build on Python >= 3.12 as of 2026-09. Pins mirror the
+# working ~/tts-venv on the original machine.
+chatterbox-tts==0.1.7
+torch==2.6.0
+torchaudio==2.6.0
+transformers==5.2.0
+numpy==1.26.4
+librosa==0.11.0

@@ -1,0 +1,45 @@
+# dependencies / build
+node_modules/
+dist/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# environment & secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+**/*API KEY*
+**/openrouter*key*
+secrets.json
+
+# media & job artifacts (regenerable, large)
+/storage/
+/tmp/
+**/renders/
+**/frames/
+**/downloads/
+*.mp4
+*.mov
+*.wav
+*.mp3
+!vendor/promo-video/template/public/sfx/*.mp3
+!vendor/autoshorts/sfx/*.wav
+!vendor/autoshorts/sfx_lib/*.wav
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# os / editor / tooling
+.DS_Store
+*.log
+.playwright-mcp/
+.vscode/
+.idea/
+coverage/

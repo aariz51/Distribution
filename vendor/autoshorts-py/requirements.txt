@@ -1,0 +1,18 @@
+# Runtime deps for the AutoShorts Python sidecars (vendored verbatim from
+# autoshorts/src-tauri/assets). Pinned to the versions proven working in the
+# original ~/autoshorts/.venv on 2026-09-20 (see requirements-full.freeze.txt).
+# Python >= 3.12. The Chatterbox voice-clone step (tts_clone.py) needs a
+# separate Python 3.11 environment — see requirements-tts.txt.
+
+opencv-python-headless==5.0.0.93   # facetrack.py, title_bar.py, clean_source.py, creative.py, broll_pipeline.py
+numpy==2.5.2                        # voice_pick.py, title_bar.py, clean_source.py
+pillow==12.3.0                      # captions.py, caption_styles.py, title_bar.py, outro.py, creative.py
+requests==2.34.2                    # broll_pipeline.py
+PyYAML==6.0.3                       # b-rolls skill scripts
+yt-dlp==2026.7.4                    # source download (also used as a binary)
+
+# Optional, heavy. Only needed for local Whisper transcription and the
+# Demucs vocal-isolation step in clean_source.py.
+openai-whisper==20250625
+demucs==4.1.0
+torch==2.13.0
