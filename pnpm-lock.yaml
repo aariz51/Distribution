@@ -397,6 +397,9 @@ importers:
       '@distribution/media':
         specifier: workspace:*
         version: link:../packages/media
+      '@distribution/pipelines':
+        specifier: workspace:*
+        version: link:../packages/pipelines
       '@distribution/storage':
         specifier: workspace:*
         version: link:../packages/storage

@@ -8,12 +8,14 @@ import { shortsThumbnail } from "./shorts/thumbnail";
 import { copyGenerate } from "./copy/job";
 import { registerEnrich, shortsEnrich } from "./shorts/enrich";
 import { registerPublish, publishPost, publishPoll } from "./publish";
+import { registerPromo } from "./promo";
 
 export { brandPalette, sourceIngest, sourceTranscribe, shortsRank, shortsCut, shortsThumbnail, copyGenerate, shortsEnrich, publishPost, publishPoll };
 export * from "./copy/platform-copy";
 export * from "./shorts/ranking";
 export * from "./shorts/enrich";
 export * from "./publish";
+export * from "./promo";
 
 /** Register every implemented handler. Types in the registry without a
  *  handler here fail fast with "no handler registered" instead of hanging. */
@@ -27,4 +29,5 @@ export function registerPipelines(queue: JobQueue): void {
   queue.register("copy.generate", copyGenerate);
   registerEnrich(queue);
   registerPublish(queue);
+  registerPromo(queue);
 }

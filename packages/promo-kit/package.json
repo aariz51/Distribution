@@ -1,0 +1,31 @@
+{
+  "name": "@distribution/promo-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/render.ts",
+    "./schema": "./src/schema.ts",
+    "./render": "./src/render.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts PromoVertical out/promo-vertical.mp4 --crf 18"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.481",
+    "@remotion/cli": "4.0.481",
+    "@remotion/renderer": "4.0.481",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remotion": "4.0.481",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.2.7",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
