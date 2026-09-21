@@ -1,0 +1,7 @@
+node_modules
+.next
+out
+# Generated promo output — regenerate with scripts/stage-demo.sh
+public/demo/*.mp4
+public/demo/*.png
+next-env.d.ts
