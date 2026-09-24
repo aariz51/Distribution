@@ -4,6 +4,7 @@ import { chooseStructure, type Structure } from "./structures";
 
 export interface BuildInput {
   profile: ProductProfile;
+  structure?: Structure;
   /** storyboard screen key → staticFile path, in the order they should be used */
   screens: Record<string, string>;
   logo: string;
@@ -102,24 +103,17 @@ function copyFor(kind: SceneKind, p: ProductProfile, screenKeys: string[]): { co
 
   switch (kind) {
     case "hook":
-      return { copy: { line: pains[0] ? sentence(pains[0]) : clause(prod.tagline, 8), glyph: "?" } };
+      return { copy: { line: sentence(pains[0] ?? prod.tagline), glyph: "?" } };
     case "oneTap":
       return { copy: { line1: l1, line2: l2 || prod.name, buttonLabel: (words(feats[0]?.title ?? "Start")[0] ?? "Start").toUpperCase().slice(0, 10) } };
     case "press":
       return { copy: { buttonLabel: (words(feats[0]?.title ?? "Start")[0] ?? "Start").toUpperCase().slice(0, 10) } };
     case "verdict":
-      return {
-        copy: {
-          eyebrow: (feats[0]?.title ?? "Result").toUpperCase().slice(0, 22),
-          subject: prod.name,
-          verdict: (pains[0] ? "SOLVED" : "READY"),
-          score: "92",
-        },
-      };
+      throw new Error("A measured verdict cannot be inferred from a product profile; use an uploaded screenshot instead.");
     case "features": {
-      const c: Record<string, string> = { title: "More than", titleAccent: `${clause(prod.category.primary, 3)}.` };
+      const c: Record<string, string> = { title: "Explore", titleAccent: prod.name };
       feats.slice(0, 3).forEach((f, i) => {
-        c[`f${i + 1}`] = clause(f.title, 4);
+        c[`f${i + 1}`] = sentence(f.title);
         c[`f${i + 1}sub`] = f.detail ? clause(f.detail, 7) : "";
       });
       return { copy: c };
@@ -136,7 +130,7 @@ function copyFor(kind: SceneKind, p: ProductProfile, screenKeys: string[]): { co
         copy: {
           pre: w.slice(0, 1).join(" ") || "One",
           accent: w.slice(1, 2).join(" ") || prod.name,
-          post: w.slice(2, 6).join(" ") || "place.",
+          post: w.slice(2).join(" "),
           chip: clause(feats[0]?.title ?? "", 3),
           chipSub: feats[0]?.detail ? clause(feats[0].detail, 4) : prod.category.primary,
         },
@@ -181,7 +175,7 @@ export function buildStoryboard(input: BuildInput): BuiltStoryboard {
   const durationSec = input.durationSec ?? 33;
   const screenKeys = Object.keys(input.screens);
 
-  const structure = chooseStructure({
+  const structure = input.structure ?? chooseStructure({
     category: profile.product.category.primary,
     tags: profile.product.category.tags,
     screenCount: screenKeys.length,
@@ -208,7 +202,8 @@ export function buildStoryboard(input: BuildInput): BuiltStoryboard {
   let cursor = 0;
   beats.forEach((b, i) => {
     const isLast = i === beats.length - 1;
-    const frames = isLast ? totalFrames - cursor : Math.max(fps, Math.round((b.weight / totalWeight) * totalFrames));
+    const remainingBeats = beats.length - i - 1;
+    const frames = isLast ? totalFrames - cursor : Math.min(totalFrames - cursor - remainingBeats * fps, Math.max(fps, Math.round((b.weight / totalWeight) * totalFrames)));
     // Rotate screens so a repeated kind does not show the same picture twice.
     const rotated = screenKeys.length ? [...screenKeys.slice(i % screenKeys.length), ...screenKeys.slice(0, i % screenKeys.length)] : [];
     const { copy, screens } = copyFor(b.kind, profile, rotated);

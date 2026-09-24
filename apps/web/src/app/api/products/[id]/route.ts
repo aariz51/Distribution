@@ -17,8 +17,8 @@ export const GET = handler(async (_req, ctx: Ctx) => {
 export const PUT = handler(async (req, ctx: Ctx) => {
   const s = await requireSession();
   const { id } = await ctx.params;
-  const input = ProductProfileInput.parse(await req.json());
-  return json({ product: await updateProduct(s.accountId, id, input) });
+  const { expectedVersion, expectedUpdatedAt, ...input } = ProductProfileInput.extend({ expectedVersion: z.number().int().positive().optional(), expectedUpdatedAt: z.iso.datetime().optional() }).parse(await req.json());
+  return json({ product: await updateProduct(s.accountId, id, input, expectedVersion, expectedUpdatedAt) });
 });
 
 const PatchBody = z.object({ palette: Palette.optional() });

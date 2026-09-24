@@ -14,7 +14,16 @@ import { compactSegments, parseCandidateJson, DETECTION_PROMPT, fillPrompt, with
 export async function shortsRank(ctx: JobContext<"shorts.rank">) {
   const { productId, projectId, transcriptId } = ctx.payload;
   const db = ctx.db;
-  const profile = await loadProfile(db, productId);
+  const profile = await loadProfile(db, productId, projectId);
+  const persisted = await db.select().from(candidates).where(eq(candidates.projectId, projectId)).orderBy(candidates.rank);
+  if (persisted.some(c => c.transcriptId !== transcriptId)) throw new PipelineError("This project already has candidates from a different transcript; create a new project to rank a new transcript", { step: "rank", retrySafe: false });
+  if (persisted.length) {
+    for (const candidate of persisted.filter(c => c.selected)) {
+      await ctx.queue.enqueue("shorts.cut", { productId, projectId, candidateId: candidate.id }, { productId, projectId, singletonKey: `cut:${candidate.id}` });
+    }
+    await ctx.progress(100, "done", "resumed existing clip candidates");
+    return { candidates: persisted.length, queued: persisted.filter(c => c.selected).length, reused: true };
+  }
   const row = (await db.select().from(transcripts).where(eq(transcripts.id, transcriptId)).limit(1))[0];
   if (!row) throw new PipelineError("transcript not found", { step: "load" });
   const transcript = NormalizedTranscript.parse({ language: row.language, duration: row.durationSec, speakers: row.speakers, words: row.words, segments: row.segments });
@@ -40,7 +49,9 @@ export async function shortsRank(ctx: JobContext<"shorts.rank">) {
     profile.product.features.filter((f, i) => new RegExp(`\\b(feature\\s*#?${i + 1}|${f.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "i").test(rationale)).map((f) => f.id);
 
   await db.transaction(async (tx) => {
-    await tx.delete(candidates).where(eq(candidates.projectId, projectId));
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`rank:${projectId}`}, 0))`);
+    const existing = await tx.select({ id: candidates.id }).from(candidates).where(eq(candidates.projectId, projectId)).limit(1);
+    if (existing.length) return;
     for (const [i, d] of drafts.entries()) {
       await tx.insert(candidates).values({ id: newId(), projectId, transcriptId, startSec: d.startSec, endSec: d.endSec, score: d.score, hook: d.hook, rationale: d.rationale, rank: i + 1, selected: i < wanted, featureIds: featureIdsFor(d.rationale) });
     }

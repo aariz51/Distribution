@@ -1,7 +1,11 @@
+import { profileAssets } from "../profile-assets";
+import { THUMBNAIL_VARIANTS } from "../thumbnail-render";
+import { attachClipThumbnail, saveGeneratedAsset } from "../generated-assets";
+import { reconcileShortsProject } from "./completion";
 import path from "node:path";
 import { readdir } from "node:fs/promises";
 import { PipelineError, newId } from "@distribution/core";
-import { assets, brandAssets, eq, sql, transcripts, candidates } from "@distribution/db";
+import { assets, eq, transcripts, candidates } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
 import { bin, run, probeMedia } from "@distribution/media";
 import { getLlm } from "@distribution/providers";
@@ -10,7 +14,7 @@ import { loadProfile, paletteOf, withScratch, transcriptTextBetween } from "./co
 import { pickFrame, runCreative } from "./sidecars";
 import { CREATIVE_COPY_SYSTEM, CREATIVE_COPY_USER, creativeBrandContext, fillPrompt, parseCopy } from "./ranking";
 
-const LAYOUTS = ["bottom-anchor", "top-banner", "dark-editorial", "split"] as const;
+const LAYOUTS = ["bottom-anchor", "top-banner", "split"] as const;
 
 /** shorts.thumbnail — the AutoShorts "post creative": sample frames, pick the cleanest, headline from the LLM, compose with brand palette + logo via creative.py. */
 export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
@@ -19,14 +23,15 @@ export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
   const storage = getStorage();
   const asset = (await db.select().from(assets).where(eq(assets.id, assetId)).limit(1))[0];
   if (!asset) throw new PipelineError("asset not found", { step: "load" });
-  const profile = await loadProfile(db, productId);
+  if (asset.productId !== productId || asset.projectId !== projectId) throw new PipelineError("Thumbnail input does not belong to this product and project", { step: "load" });
+  const profile = await loadProfile(db, productId, projectId);
   const palette = paletteOf(profile);
   const local = await storage.localPathFor(asset.storageKey);
   const probe = await probeMedia(local, { signal: ctx.signal });
   const meta = asset.metadata as { hook?: string; startSec?: number; endSec?: number; rank?: number };
-  const logoRow = profile.brand.logoAssetId ? (await db.select({ key: assets.storageKey }).from(assets).where(eq(assets.id, profile.brand.logoAssetId)).limit(1))[0] : undefined;
-  const logoPath = logoRow ? await storage.localPathFor(logoRow.key) : undefined;
-  const screenshot = (await db.select({ key: assets.storageKey }).from(brandAssets).innerJoin(assets, eq(assets.id, brandAssets.assetId)).where(sql`${brandAssets.productId} = ${productId} and ${brandAssets.kind} = 'screenshot'`).orderBy(brandAssets.position).limit(1))[0];
+  const brand = await profileAssets(db, profile);
+  const logoPath = brand.logo ? await storage.localPathFor(brand.logo.storageKey) : undefined;
+  const screenshot = brand.screenshots[0];
 
   const out = await withScratch("thumb", async (scratch) => {
     await ctx.progress(10, "frames", "sampling frames");
@@ -62,6 +67,9 @@ export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
 
     await ctx.progress(70, "compose", "composing thumbnail");
     const layout = LAYOUTS[((meta.rank ?? 1) - 1) % LAYOUTS.length]!;
+    let primaryId = "";
+    const variantIds: Record<string, string> = {};
+    for (const variant of THUMBNAIL_VARIANTS) {
     const pngPath = await runCreative(
       {
         frame: best.path,
@@ -70,19 +78,23 @@ export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
         attribution: undefined,
         brand: { name: profile.product.name, colorInk: palette.ink, colorAccent: palette.accent, colorCanvas: palette.canvas, colorGround: palette.ground, logoPath, ctaText: profile.brand.cta, fontDisplay: profile.brand.typography?.display, fontBody: profile.brand.typography?.body, fontHeavy: profile.brand.typography?.heavy },
         layout,
-        size: [1080, 1350],
-        screenshot: layout === "split" && screenshot ? await storage.localPathFor(screenshot.key) : undefined,
-        out: path.join(scratch, "thumb.png"),
+        size: variant.size,
+        screenshot: layout === "split" && screenshot ? await storage.localPathFor(screenshot.storageKey) : undefined,
+        out: path.join(scratch, `thumb-${variant.name}.png`),
       },
       { signal: ctx.signal, onLog: (l) => void ctx.event("debug", l, undefined, "compose") },
     );
-    const thumbId = newId();
-    const key = keys.thumbnail(projectId, thumbId);
+    let thumbId = newId();
+    const key = keys.thumbnail(projectId, assetId).replace(/\.png$/, `-${variant.name}.png`);
     await storage.putFile(key, pngPath, { contentType: "image/png" });
-    await db.insert(assets).values({ id: thumbId, productId, projectId, type: "thumbnail", sourceId: asset.sourceId, candidateId: asset.candidateId, derivedFromAssetId: assetId, storageKey: key, mimeType: "image/png", width: 1080, height: 1350, status: "review", approvalState: "pending", profileVersion: profile.version, jobId: ctx.jobId, metadata: { headline, kicker, layout, frame: path.basename(best.path), textiness: best.textiness } });
-    await db.update(assets).set({ thumbnailAssetId: thumbId, updatedAt: sql`now()` }).where(eq(assets.id, assetId));
-    return { thumbId, headline, layout };
+    thumbId = await saveGeneratedAsset(db, { id: thumbId, productId, projectId, type: "thumbnail", sourceId: asset.sourceId, candidateId: asset.candidateId, derivedFromAssetId: assetId, storageKey: key, mimeType: "image/png", width: variant.size[0], height: variant.size[1], status: "review", approvalState: "pending", profileVersion: profile.version, jobId: ctx.jobId, metadata: { variant: variant.name, platforms: variant.platforms, headline, kicker, layout, frame: path.basename(best.path), textiness: best.textiness } });
+    variantIds[variant.name] = thumbId;
+    if (variant.name === "portrait") primaryId = thumbId;
+    }
+    await attachClipThumbnail(db, productId, assetId, primaryId);
+    return { thumbId: primaryId, variants: variantIds, headline, layout };
   });
+  await reconcileShortsProject(db, productId, projectId);
   await ctx.progress(100, "done", "thumbnail ready");
   return out;
 }

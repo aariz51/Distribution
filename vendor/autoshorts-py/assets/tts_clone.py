@@ -11,11 +11,30 @@ from __future__ import annotations
 
 import argparse
 import sys
+import shutil
 from pathlib import Path
 
 
 def log(msg: str) -> None:
     print(f"[tts] {msg}", file=sys.stderr, flush=True)
+
+
+def require_download_space(cache: Path, minimum: int = 4 * 1024 ** 3) -> None:
+    existing = cache.expanduser().resolve()
+    while not existing.exists():
+        existing = existing.parent
+    free = shutil.disk_usage(existing).free
+    if free < minimum:
+        raise RuntimeError(f"Voice model cache is incomplete and needs at least {minimum / 1024**3:.1f} GiB free for download; {free / 1024**3:.1f} GiB available. Free space or configure HF_HUB_CACHE on a larger volume.")
+
+
+def check_model_cache() -> None:
+    from huggingface_hub import try_to_load_from_cache
+    from huggingface_hub.constants import HF_HUB_CACHE
+    names = ("ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt")
+    missing = any(not isinstance(try_to_load_from_cache("ResembleAI/chatterbox", name), str) for name in names)
+    if missing:
+        require_download_space(Path(HF_HUB_CACHE))
 
 
 def main() -> int:
@@ -33,6 +52,7 @@ def main() -> int:
     if not reference.exists():
         raise SystemExit(f"reference not found: {reference}")
 
+    check_model_cache()
     import torch
     from chatterbox.tts import ChatterboxTTS
 

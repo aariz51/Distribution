@@ -43,3 +43,8 @@ venv/
 .vscode/
 .idea/
 coverage/
+
+.venv-screen/
+
+# Vercel local project linkage
+.vercel/

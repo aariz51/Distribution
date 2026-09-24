@@ -184,6 +184,7 @@ export const transcripts = pgTable("transcripts", {
   id: uuid().primaryKey(),
   sourceId: uuid().notNull().references(() => sourceVideos.id, { onDelete: "cascade" }),
   engine: text().notNull(),
+  cacheKey: text(),
   language: text(),
   durationSec: doublePrecision().notNull(),
   words: jsonb().$type<unknown[]>().notNull(),
@@ -353,3 +354,13 @@ export const workerHeartbeats = pgTable("worker_heartbeats", {
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** In-flight/uncertain provider costs are separate from confirmed usage estimates. */
+export const budgetReservations = pgTable("budget_reservations", {
+  id: uuid().primaryKey(),
+  productId: uuid().notNull().references(() => products.id, { onDelete: "cascade" }),
+  jobId: uuid().notNull(),
+  usdEstimate: doublePrecision().notNull(),
+  state: text().notNull().default("reserved"),
+  createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+}, t => [index("budget_reservations_product_idx").on(t.productId, t.createdAt)]);

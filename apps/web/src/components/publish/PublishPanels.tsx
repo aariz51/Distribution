@@ -24,6 +24,7 @@ export interface ScheduleItem {
   scheduledFor: string;
   status: string;
   publishedUrl: string | null;
+  postizPostId: string | null;
   lastError: string | null;
   attempts: number;
   hook: string | null;
@@ -163,6 +164,7 @@ export function ScheduleForm({ assets, channels, timezone }: { assets: Schedulab
   return (
     <Card>
       <CardHeader title="Schedule a post" meta={timezone} />
+      <p className="px-5 pt-3 text-xs text-[var(--muted)]">Approve the generated YouTube cover in the library before scheduling. YouTube receives that cover. Custom covers on other platforms are not currently sent; those platforms choose their preview frame. YouTube Shorts may use a platform-selected frame.</p>
       <CardBody className="space-y-4">
         <Field label="Asset">
           <Select value={assetId} onChange={(e) => { setAssetId(e.target.value); setPicked([]); }}>
@@ -262,15 +264,22 @@ export function AutoFillCard({ productId, hasCadence }: { productId: string; has
 export function ScheduleList({ items }: { items: ScheduleItem[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [postIds, setPostIds] = useState<Record<string, string>>({});
 
-  async function cancel(item: ScheduleItem) {
-    setBusy(item.id);
+  async function update(item: ScheduleItem, action: "cancel" | "reconcile") {
+    setBusy(item.id); setErrors(previous => ({ ...previous, [item.id]: "" }));
     try {
-      await fetch(`/api/assets/${item.assetId}/schedule/${item.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/assets/${item.assetId}/schedule/${item.id}`, {
+        method: action === "cancel" ? "DELETE" : "POST",
+        headers: { "content-type": "application/json" },
+        ...(action === "reconcile" ? { body: JSON.stringify({ postId: postIds[item.id] ?? item.postizPostId ?? "" }) } : {}),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not update this schedule");
       router.refresh();
-    } finally {
-      setBusy(null);
-    }
+    } catch (error) { setErrors(previous => ({ ...previous, [item.id]: error instanceof Error ? error.message : "Could not update this schedule" })); }
+    finally { setBusy(null); }
   }
 
   if (items.length === 0) {
@@ -299,8 +308,16 @@ export function ScheduleList({ items }: { items: ScheduleItem[] }) {
                 <a href={i.publishedUrl} target="_blank" rel="noreferrer" className="text-xs underline">view</a>
               )}
               {(i.status === "scheduled" || i.status === "failed") && (
-                <Button size="sm" variant="ghost" onClick={() => cancel(i)} loading={busy === i.id}>Cancel</Button>
+                <Button size="sm" variant="ghost" onClick={() => update(i, "cancel")} loading={busy === i.id}>Cancel</Button>
               )}
+              {(i.status === "publishing" || i.status === "failed") && i.attempts > 0 && <div className="w-full space-y-2 pt-2">
+                <p className="text-xs text-[var(--muted)]">If a status check stopped, confirm the matching post in Postiz and enter its ID to resume checking.</p>
+                <div className="flex gap-2">
+                  <TextInput aria-label={`Postiz post ID for ${i.channelName}`} value={postIds[i.id] ?? i.postizPostId ?? ""} onChange={event => setPostIds(previous => ({ ...previous, [i.id]: event.target.value }))} placeholder="Postiz post ID" />
+                  <Button size="sm" variant="secondary" loading={busy === i.id} disabled={!(postIds[i.id] ?? i.postizPostId ?? "").trim()} onClick={() => update(i, "reconcile")}>Resume status checks</Button>
+                </div>
+              </div>}
+              {errors[i.id] && <p role="alert" className="w-full text-xs text-red-600">{errors[i.id]}</p>}
               {i.lastError && <p className="w-full text-xs text-red-600">{i.lastError}</p>}
             </li>
           ))}

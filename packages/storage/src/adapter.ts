@@ -20,7 +20,7 @@ export interface StorageAdapter {
   commit(key: string, opts?: PutOptions): Promise<StoredObject>;
   putFile(key: string, srcPath: string, opts?: PutOptions): Promise<StoredObject>;
   putBuffer(key: string, data: Buffer, opts?: PutOptions): Promise<StoredObject>;
-  getStream(key: string): Promise<Readable>;
+  getStream(key: string, range?: { start: number; end: number }): Promise<Readable>;
   getBuffer(key: string): Promise<Buffer>;
   head(key: string): Promise<StoredObject | null>;
   exists(key: string): Promise<boolean>;

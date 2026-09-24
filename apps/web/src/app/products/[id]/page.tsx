@@ -4,8 +4,10 @@ import { getSession } from "@/lib/auth";
 import { getProduct, listBrandAssets } from "@/lib/products";
 import { libraryCounts, listJobs } from "@/lib/library";
 import { AppShell } from "@/components/AppShell";
+import { WorkerStatus } from "@/components/WorkerStatus";
 import { PaletteCard } from "@/components/PaletteCard";
 import { AssetUploader } from "@/components/AssetUploader";
+import { GeneratePromo } from "@/components/GeneratePromo";
 import { JobProgress } from "@/components/JobProgress";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { StatTile } from "@/components/ui/StatTile";
@@ -21,14 +23,15 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const product = await getProduct(session.accountId, id).catch(() => null);
   if (!product) notFound();
   const [brandAssets, counts, recentJobs] = await Promise.all([listBrandAssets(id), libraryCounts(id), listJobs(id, 6)]);
-  const logo = brandAssets.find((a) => a.kind === "logo");
-  const screens = brandAssets.filter((a) => a.kind === "screenshot");
+  const logo = brandAssets.find((a) => a.id === product.brand.logoAssetId);
+  const screens = product.brand.screenshotAssetIds.flatMap(assetId => brandAssets.filter(a => a.id === assetId));
   const prefs = product.contentPreferences;
 
   const prefRows: Array<[string, string]> = [
     ["Caption preset", prefs.captionPresetId],
     ["Voice", humanize(prefs.voice)],
-    ["People policy", humanize(prefs.peoplePolicy)],
+    ["Source checks", "Music and female figures blocked"],
+    ["B-roll people", prefs.peoplePolicy === "no-people" ? "No people" : "No female figures"],
     ["Clips per source", String(prefs.clipsPerSource)],
     ["Clip length", `${prefs.clipLengthSec.min}–${prefs.clipLengthSec.max}s`],
     ["Hashtags", humanize(prefs.hashtagStrategy)],
@@ -38,6 +41,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
   return (
     <AppShell email={session.email} product={{ id, name: product.product.name }}>
+      <WorkerStatus />
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-4">
           {logo ? (
@@ -58,9 +62,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
         </div>
-        <ButtonLink href={`/products/${id}/sources`} variant="primary">
-          Generate shorts
-        </ButtonLink>
+        <div className="flex flex-wrap items-start gap-3">
+          <ButtonLink href={`/products/${id}/edit`} variant="secondary">Edit product</ButtonLink>
+          <GeneratePromo savedReferenceId={product.sources.promoReference?.kind === "library" ? product.sources.promoReference.referenceId : undefined} savedReferenceUrl={product.sources.promoReference?.kind === "url" ? product.sources.promoReference.url : undefined} productId={id} hasLogo={Boolean(logo)} screenCount={screens.length} />
+          <ButtonLink href={`/products/${id}/sources`} variant="secondary">
+            Generate shorts
+          </ButtonLink>
+        </div>
       </div>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">

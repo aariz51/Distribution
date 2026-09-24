@@ -1,0 +1,627 @@
+{
+  "source": "https://github.com/audioset/ontology/blob/1e85b88a094054c66096a18073b76cb71f5b1436/ontology.json",
+  "sourceSha256": "9c685f4403eecc3ca9be37fd7285cf212feaaea6ff7229d3e7ca89e0d1f2d15d",
+  "attribution": "AudioSet ontology, Google Inc.",
+  "license": "CC BY-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "selection": "Descendants including roots Music (/m/04rlf) and Singing (/m/015lz1), intersected with the pinned YAMNet vocabulary.",
+  "classMapSha256": "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
+  "classes": [
+    {
+      "id": "/m/015lz1",
+      "name": "Singing"
+    },
+    {
+      "id": "/m/0l14jd",
+      "name": "Choir"
+    },
+    {
+      "id": "/m/01swy6",
+      "name": "Yodeling"
+    },
+    {
+      "id": "/m/02bk07",
+      "name": "Chant"
+    },
+    {
+      "id": "/m/01c194",
+      "name": "Mantra"
+    },
+    {
+      "id": "/t/dd00005",
+      "name": "Child singing"
+    },
+    {
+      "id": "/t/dd00006",
+      "name": "Synthetic singing"
+    },
+    {
+      "id": "/m/06bxc",
+      "name": "Rapping"
+    },
+    {
+      "id": "/m/0239kh",
+      "name": "Cowbell"
+    },
+    {
+      "id": "/m/04rlf",
+      "name": "Music"
+    },
+    {
+      "id": "/m/04szw",
+      "name": "Musical instrument"
+    },
+    {
+      "id": "/m/0fx80y",
+      "name": "Plucked string instrument"
+    },
+    {
+      "id": "/m/0342h",
+      "name": "Guitar"
+    },
+    {
+      "id": "/m/02sgy",
+      "name": "Electric guitar"
+    },
+    {
+      "id": "/m/018vs",
+      "name": "Bass guitar"
+    },
+    {
+      "id": "/m/042v_gx",
+      "name": "Acoustic guitar"
+    },
+    {
+      "id": "/m/06w87",
+      "name": "Steel guitar, slide guitar"
+    },
+    {
+      "id": "/m/01glhc",
+      "name": "Tapping (guitar technique)"
+    },
+    {
+      "id": "/m/07s0s5r",
+      "name": "Strum"
+    },
+    {
+      "id": "/m/018j2",
+      "name": "Banjo"
+    },
+    {
+      "id": "/m/0jtg0",
+      "name": "Sitar"
+    },
+    {
+      "id": "/m/04rzd",
+      "name": "Mandolin"
+    },
+    {
+      "id": "/m/01bns_",
+      "name": "Zither"
+    },
+    {
+      "id": "/m/07xzm",
+      "name": "Ukulele"
+    },
+    {
+      "id": "/m/05148p4",
+      "name": "Keyboard (musical)"
+    },
+    {
+      "id": "/m/05r5c",
+      "name": "Piano"
+    },
+    {
+      "id": "/m/01s0ps",
+      "name": "Electric piano"
+    },
+    {
+      "id": "/m/013y1f",
+      "name": "Organ"
+    },
+    {
+      "id": "/m/03xq_f",
+      "name": "Electronic organ"
+    },
+    {
+      "id": "/m/03gvt",
+      "name": "Hammond organ"
+    },
+    {
+      "id": "/m/0l14qv",
+      "name": "Synthesizer"
+    },
+    {
+      "id": "/m/01v1d8",
+      "name": "Sampler"
+    },
+    {
+      "id": "/m/03q5t",
+      "name": "Harpsichord"
+    },
+    {
+      "id": "/m/0l14md",
+      "name": "Percussion"
+    },
+    {
+      "id": "/m/02hnl",
+      "name": "Drum kit"
+    },
+    {
+      "id": "/m/0cfdd",
+      "name": "Drum machine"
+    },
+    {
+      "id": "/m/026t6",
+      "name": "Drum"
+    },
+    {
+      "id": "/m/06rvn",
+      "name": "Snare drum"
+    },
+    {
+      "id": "/m/03t3fj",
+      "name": "Rimshot"
+    },
+    {
+      "id": "/m/02k_mr",
+      "name": "Drum roll"
+    },
+    {
+      "id": "/m/0bm02",
+      "name": "Bass drum"
+    },
+    {
+      "id": "/m/011k_j",
+      "name": "Timpani"
+    },
+    {
+      "id": "/m/01p970",
+      "name": "Tabla"
+    },
+    {
+      "id": "/m/01qbl",
+      "name": "Cymbal"
+    },
+    {
+      "id": "/m/03qtq",
+      "name": "Hi-hat"
+    },
+    {
+      "id": "/m/01sm1g",
+      "name": "Wood block"
+    },
+    {
+      "id": "/m/07brj",
+      "name": "Tambourine"
+    },
+    {
+      "id": "/m/05r5wn",
+      "name": "Rattle (instrument)"
+    },
+    {
+      "id": "/m/0xzly",
+      "name": "Maraca"
+    },
+    {
+      "id": "/m/0mbct",
+      "name": "Gong"
+    },
+    {
+      "id": "/m/016622",
+      "name": "Tubular bells"
+    },
+    {
+      "id": "/m/0j45pbj",
+      "name": "Mallet percussion"
+    },
+    {
+      "id": "/m/0dwsp",
+      "name": "Marimba, xylophone"
+    },
+    {
+      "id": "/m/0dwtp",
+      "name": "Glockenspiel"
+    },
+    {
+      "id": "/m/0dwt5",
+      "name": "Vibraphone"
+    },
+    {
+      "id": "/m/0l156b",
+      "name": "Steelpan"
+    },
+    {
+      "id": "/m/05pd6",
+      "name": "Orchestra"
+    },
+    {
+      "id": "/m/01kcd",
+      "name": "Brass instrument"
+    },
+    {
+      "id": "/m/0319l",
+      "name": "French horn"
+    },
+    {
+      "id": "/m/07gql",
+      "name": "Trumpet"
+    },
+    {
+      "id": "/m/07c6l",
+      "name": "Trombone"
+    },
+    {
+      "id": "/m/0l14_3",
+      "name": "Bowed string instrument"
+    },
+    {
+      "id": "/m/02qmj0d",
+      "name": "String section"
+    },
+    {
+      "id": "/m/07y_7",
+      "name": "Violin, fiddle"
+    },
+    {
+      "id": "/m/0d8_n",
+      "name": "Pizzicato"
+    },
+    {
+      "id": "/m/01xqw",
+      "name": "Cello"
+    },
+    {
+      "id": "/m/02fsn",
+      "name": "Double bass"
+    },
+    {
+      "id": "/m/085jw",
+      "name": "Wind instrument, woodwind instrument"
+    },
+    {
+      "id": "/m/0l14j_",
+      "name": "Flute"
+    },
+    {
+      "id": "/m/06ncr",
+      "name": "Saxophone"
+    },
+    {
+      "id": "/m/01wy6",
+      "name": "Clarinet"
+    },
+    {
+      "id": "/m/03m5k",
+      "name": "Harp"
+    },
+    {
+      "id": "/m/0395lw",
+      "name": "Bell"
+    },
+    {
+      "id": "/m/03w41f",
+      "name": "Church bell"
+    },
+    {
+      "id": "/m/027m70_",
+      "name": "Jingle bell"
+    },
+    {
+      "id": "/m/0gy1t2s",
+      "name": "Bicycle bell"
+    },
+    {
+      "id": "/m/07n_g",
+      "name": "Tuning fork"
+    },
+    {
+      "id": "/m/0f8s22",
+      "name": "Chime"
+    },
+    {
+      "id": "/m/026fgl",
+      "name": "Wind chime"
+    },
+    {
+      "id": "/m/0150b9",
+      "name": "Change ringing (campanology)"
+    },
+    {
+      "id": "/m/03qjg",
+      "name": "Harmonica"
+    },
+    {
+      "id": "/m/0mkg",
+      "name": "Accordion"
+    },
+    {
+      "id": "/m/0192l",
+      "name": "Bagpipes"
+    },
+    {
+      "id": "/m/02bxd",
+      "name": "Didgeridoo"
+    },
+    {
+      "id": "/m/0l14l2",
+      "name": "Shofar"
+    },
+    {
+      "id": "/m/07kc_",
+      "name": "Theremin"
+    },
+    {
+      "id": "/m/0l14t7",
+      "name": "Singing bowl"
+    },
+    {
+      "id": "/m/01hgjl",
+      "name": "Scratching (performance technique)"
+    },
+    {
+      "id": "/m/064t9",
+      "name": "Pop music"
+    },
+    {
+      "id": "/m/0glt670",
+      "name": "Hip hop music"
+    },
+    {
+      "id": "/m/02cz_7",
+      "name": "Beatboxing"
+    },
+    {
+      "id": "/m/06by7",
+      "name": "Rock music"
+    },
+    {
+      "id": "/m/03lty",
+      "name": "Heavy metal"
+    },
+    {
+      "id": "/m/05r6t",
+      "name": "Punk rock"
+    },
+    {
+      "id": "/m/0dls3",
+      "name": "Grunge"
+    },
+    {
+      "id": "/m/0dl5d",
+      "name": "Progressive rock"
+    },
+    {
+      "id": "/m/07sbbz2",
+      "name": "Rock and roll"
+    },
+    {
+      "id": "/m/05w3f",
+      "name": "Psychedelic rock"
+    },
+    {
+      "id": "/m/06j6l",
+      "name": "Rhythm and blues"
+    },
+    {
+      "id": "/m/0gywn",
+      "name": "Soul music"
+    },
+    {
+      "id": "/m/06cqb",
+      "name": "Reggae"
+    },
+    {
+      "id": "/m/01lyv",
+      "name": "Country"
+    },
+    {
+      "id": "/m/015y_n",
+      "name": "Swing music"
+    },
+    {
+      "id": "/m/0gg8l",
+      "name": "Bluegrass"
+    },
+    {
+      "id": "/m/02x8m",
+      "name": "Funk"
+    },
+    {
+      "id": "/m/02w4v",
+      "name": "Folk music"
+    },
+    {
+      "id": "/m/06j64v",
+      "name": "Middle Eastern music"
+    },
+    {
+      "id": "/m/03_d0",
+      "name": "Jazz"
+    },
+    {
+      "id": "/m/026z9",
+      "name": "Disco"
+    },
+    {
+      "id": "/m/0ggq0m",
+      "name": "Classical music"
+    },
+    {
+      "id": "/m/05lls",
+      "name": "Opera"
+    },
+    {
+      "id": "/m/02lkt",
+      "name": "Electronic music"
+    },
+    {
+      "id": "/m/03mb9",
+      "name": "House music"
+    },
+    {
+      "id": "/m/07gxw",
+      "name": "Techno"
+    },
+    {
+      "id": "/m/07s72n",
+      "name": "Dubstep"
+    },
+    {
+      "id": "/m/0283d",
+      "name": "Drum and bass"
+    },
+    {
+      "id": "/m/0m0jc",
+      "name": "Electronica"
+    },
+    {
+      "id": "/m/08cyft",
+      "name": "Electronic dance music"
+    },
+    {
+      "id": "/m/0fd3y",
+      "name": "Ambient music"
+    },
+    {
+      "id": "/m/07lnk",
+      "name": "Trance music"
+    },
+    {
+      "id": "/m/0g293",
+      "name": "Music of Latin America"
+    },
+    {
+      "id": "/m/0ln16",
+      "name": "Salsa music"
+    },
+    {
+      "id": "/m/0326g",
+      "name": "Flamenco"
+    },
+    {
+      "id": "/m/0155w",
+      "name": "Blues"
+    },
+    {
+      "id": "/m/05fw6t",
+      "name": "Music for children"
+    },
+    {
+      "id": "/m/02v2lh",
+      "name": "New-age music"
+    },
+    {
+      "id": "/m/0y4f8",
+      "name": "Vocal music"
+    },
+    {
+      "id": "/m/0z9c",
+      "name": "A capella"
+    },
+    {
+      "id": "/m/0164x2",
+      "name": "Music of Africa"
+    },
+    {
+      "id": "/m/0145m",
+      "name": "Afrobeat"
+    },
+    {
+      "id": "/m/02mscn",
+      "name": "Christian music"
+    },
+    {
+      "id": "/m/016cjb",
+      "name": "Gospel music"
+    },
+    {
+      "id": "/m/028sqc",
+      "name": "Music of Asia"
+    },
+    {
+      "id": "/m/015vgc",
+      "name": "Carnatic music"
+    },
+    {
+      "id": "/m/0dq0md",
+      "name": "Music of Bollywood"
+    },
+    {
+      "id": "/m/06rqw",
+      "name": "Ska"
+    },
+    {
+      "id": "/m/02p0sh1",
+      "name": "Traditional music"
+    },
+    {
+      "id": "/m/05rwpb",
+      "name": "Independent music"
+    },
+    {
+      "id": "/m/074ft",
+      "name": "Song"
+    },
+    {
+      "id": "/m/025td0t",
+      "name": "Background music"
+    },
+    {
+      "id": "/m/02cjck",
+      "name": "Theme music"
+    },
+    {
+      "id": "/m/03r5q_",
+      "name": "Jingle (music)"
+    },
+    {
+      "id": "/m/0l14gg",
+      "name": "Soundtrack music"
+    },
+    {
+      "id": "/m/07pkxdp",
+      "name": "Lullaby"
+    },
+    {
+      "id": "/m/01z7dr",
+      "name": "Video game music"
+    },
+    {
+      "id": "/m/0140xf",
+      "name": "Christmas music"
+    },
+    {
+      "id": "/m/0ggx5q",
+      "name": "Dance music"
+    },
+    {
+      "id": "/m/04wptg",
+      "name": "Wedding music"
+    },
+    {
+      "id": "/t/dd00031",
+      "name": "Happy music"
+    },
+    {
+      "id": "/t/dd00033",
+      "name": "Sad music"
+    },
+    {
+      "id": "/t/dd00034",
+      "name": "Tender music"
+    },
+    {
+      "id": "/t/dd00035",
+      "name": "Exciting music"
+    },
+    {
+      "id": "/t/dd00036",
+      "name": "Angry music"
+    },
+    {
+      "id": "/t/dd00037",
+      "name": "Scary music"
+    }
+  ]
+}

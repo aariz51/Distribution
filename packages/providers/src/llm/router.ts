@@ -1,4 +1,4 @@
-import { PipelineError, logger } from "@distribution/core";
+import { BudgetExceededError, PipelineError, logger } from "@distribution/core";
 import type { CallContext, ChatProvider, ChatRequest, ChatResponse, ProviderId, Purpose } from "../types";
 import { AnthropicProvider } from "./anthropic";
 import { OPENAI_COMPATIBLE, OpenAICompatibleProvider } from "./openai-compatible";
@@ -66,6 +66,7 @@ export class LlmRouter {
         if (!res.text.trim()) throw new PipelineError(`${r.provider} returned empty text`, { retrySafe: true });
         return res;
       } catch (err) {
+        if (err instanceof BudgetExceededError) throw err;
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${r.provider}/${r.model}: ${msg}`);
         (ctx.log ?? logger).warn({ provider: r.provider, model: r.model, purpose: ctx.purpose, err: msg }, "provider failed; falling back");

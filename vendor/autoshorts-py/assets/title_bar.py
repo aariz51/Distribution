@@ -263,6 +263,8 @@ def main() -> int:
     # the original white-on-black look.
     ap.add_argument("--fill", help="text colour as #RRGGBB (default white)")
     ap.add_argument("--stroke", help="outline colour as #RRGGBB (default black)")
+    ap.add_argument("--overlay-output", help="persist the exact rendered title overlay")
+    ap.add_argument("--layout-output", help="persist the title band transform")
     args = ap.parse_args()
     global TITLE_FILL, TITLE_STROKE
     if args.fill:
@@ -304,48 +306,56 @@ def main() -> int:
     else:
         log(f"banner occupies y=0..{bottom} (face clear)")
 
+    if args.overlay_output:
+        overlay.save(args.overlay_output)
+    if args.layout_output:
+        import json
+        Path(args.layout_output).write_text(json.dumps({"width": width, "height": height, "bandPixels": band if use_band else 0}))
+
     if args.png_only:
         overlay.save(args.png_only)
         print(args.png_only)
         return 0
 
     import tempfile
-    png = Path(tempfile.gettempdir()) / f"{video.stem}_title.png"
-    overlay.save(png)
+    # Each invocation owns its overlay, even when every input is named flat.mp4.
+    # Context cleanup also runs when ffmpeg fails.
+    with tempfile.TemporaryDirectory(prefix="distribution-title-") as overlay_dir:
+        png = Path(overlay_dir) / "title.png"
+        overlay.save(png)
 
-    output = Path(args.output) if args.output else video.with_name(
-        f"{video.stem}_titled.mp4")
+        output = Path(args.output) if args.output else video.with_name(
+            f"{video.stem}_titled.mp4")
 
-    # Speaker footage is a 9:16 crop of a 16:9 source, so it is only ~607px
-    # wide before being blown up to 1080 -- measured at a 6x sharpness drop
-    # against the native cut, while B-roll (natively 1080+) stays crisp. That
-    # upscale cannot be undone, but a mild unsharp mask restores much of the
-    # perceived detail. Kept gentle (0.7) so already-sharp B-roll does not halo.
-    SHARPEN = "unsharp=5:5:0.7:5:5:0.0"
+        # Speaker footage is a 9:16 crop of a 16:9 source, so it is only ~607px
+        # wide before being blown up to 1080 -- measured at a 6x sharpness drop
+        # against the native cut, while B-roll (natively 1080+) stays crisp. That
+        # upscale cannot be undone, but a mild unsharp mask restores much of the
+        # perceived detail. Kept gentle (0.7) so already-sharp B-roll does not halo.
+        SHARPEN = "unsharp=5:5:0.7:5:5:0.0"
 
-    if use_band:
-        # Trim an equal strip off the bottom and push the picture down, so the
-        # frame size is unchanged and nothing in the upper picture is hidden.
-        # The bottom strip is safe to lose: captions sit around 0.65-0.72 of the
-        # height, well above the trimmed region.
-        vf = (f"crop={width}:{height - band}:0:0,"
-              f"pad={width}:{height}:0:{band}:black,{SHARPEN}")
-        filt = f"[0:v]{vf}[base];[base][1:v]overlay=0:0:format=auto[v]"
-    else:
-        filt = f"[0:v]{SHARPEN}[base];[base][1:v]overlay=0:0:format=auto[v]"
+        if use_band:
+            # Trim an equal strip off the bottom and push the picture down, so the
+            # frame size is unchanged and nothing in the upper picture is hidden.
+            # The bottom strip is safe to lose: captions sit around 0.65-0.72 of the
+            # height, well above the trimmed region.
+            vf = (f"crop={width}:{height - band}:0:0,"
+                  f"pad={width}:{height}:0:{band}:black,{SHARPEN}")
+            filt = f"[0:v]{vf}[base];[base][1:v]overlay=0:0:format=auto[v]"
+        else:
+            filt = f"[0:v]{SHARPEN}[base];[base][1:v]overlay=0:0:format=auto[v]"
 
-    subprocess.run([
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-i", str(video), "-i", str(png),
-        "-filter_complex", filt,
-        "-map", "[v]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "slow", "-crf", "16",
-        "-pix_fmt", "yuv420p",
-        # Audio untouched, so the speaker and any cloned outro line are intact.
-        "-c:a", "copy", "-movflags", "+faststart", str(output),
-    ], check=True, capture_output=True, text=True)
+        subprocess.run([
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(video), "-i", str(png),
+            "-filter_complex", filt,
+            "-map", "[v]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+            "-pix_fmt", "yuv420p",
+            # Audio untouched, so the speaker and any cloned outro line are intact.
+            "-c:a", "copy", "-movflags", "+faststart", str(output),
+        ], check=True, capture_output=True, text=True)
 
-    png.unlink(missing_ok=True)
     print(str(output))
     return 0
 

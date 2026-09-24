@@ -1,18 +1,23 @@
+import { screenOriginal, screenFinalClip } from "../screening";
+import { validateEnrichedMedia } from "./validate";
+import { AnthropicProvider, femaleOutroSpeech } from "@distribution/providers";
+import { saveGeneratedAsset } from "../../generated-assets";
+import { reconcileShortsProject } from "../completion";
+import os from "node:os";
 import path from "node:path";
 import { copyFile, writeFile } from "node:fs/promises";
 import { PipelineError, newId, type TranscriptWord } from "@distribution/core";
-import { assets, candidates, eq, transcripts } from "@distribution/db";
+import { and, assets, candidates, eq, sourceVideos, transcripts } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
-import { probeMedia } from "@distribution/media";
+import { GB, assertDiskSpace } from "@distribution/media";
 import { getStorage, keys } from "@distribution/storage";
 import { loadProfile, withScratch } from "../common";
-import { NO_TTS_PYTHON, SILENT_OUTRO_LINE, brollScenePlanPath, ensureSfxKit, runBroll, runOutro, runSfxMix } from "../sidecars";
+import { brollScenePlanPath, ensureSfxKit, runBroll, runOutro, runSfxMix } from "../sidecars";
 import { orderSteps, rebaseWords, type EnrichStep } from "./steps";
 
 /**
  * shorts.enrich — the AutoShorts enrichment chain as a job: B-roll → sound design →
- * branded end card, each step soft-failing (warn event, carry the previous file on)
- * exactly as `lib.rs:777-821` did. Output is a new `clip_enriched` asset derived from
+ * branded end card. Requested steps must succeed. Output is a new `clip_enriched` asset derived from
  * the clip; the parent clip and its copy rows are left untouched.
  */
 export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
@@ -23,18 +28,31 @@ export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
 
   const parent = (await db.select().from(assets).where(eq(assets.id, assetId)).limit(1))[0];
   if (!parent) throw new PipelineError("asset not found", { step: "load" });
+  if (parent.productId !== productId || parent.projectId !== projectId) throw new PipelineError("Clip does not belong to this product and project", { step: "load" });
   if (parent.type !== "clip") throw new PipelineError(`asset is ${parent.type}, expected clip`, { step: "load" });
   if (!parent.candidateId) throw new PipelineError("clip has no candidate", { step: "load" });
   const candidateId = parent.candidateId;
   const cand = (await db.select().from(candidates).where(eq(candidates.id, candidateId)).limit(1))[0];
-  if (!cand) throw new PipelineError("candidate not found", { step: "load" });
+  if (!cand || cand.projectId !== projectId) throw new PipelineError("Candidate does not belong to this project", { step: "load" });
   const tr = (await db.select().from(transcripts).where(eq(transcripts.id, cand.transcriptId)).limit(1))[0];
-  const profile = await loadProfile(db, productId);
+  const source = tr ? (await db.select().from(sourceVideos).where(eq(sourceVideos.id, tr.sourceId)).limit(1))[0] : undefined;
+  if (!source || source.productId !== productId || parent.sourceId !== source.id) throw new PipelineError("Transcript/source does not belong to this clip", { step: "load" });
+  if (!source.storageKey) throw new PipelineError("Original source missing", { step: "screening" });
+  await screenOriginal(ctx, source.id, typeof source.probe?.originalStorageKey === "string" ? source.probe.originalStorageKey : source.storageKey);
+  const profile = await loadProfile(db, productId, projectId);
   const prefs = profile.contentPreferences;
+  const effectivePeoplePolicy = prefs.peoplePolicy === "no-people" ? "no-people" : "no-women";
   const clipWords = tr ? rebaseWords(tr.words as TranscriptWord[], cand.startSec, cand.endSec) : [];
 
-  const logoRow = profile.brand.logoAssetId ? (await db.select({ key: assets.storageKey }).from(assets).where(eq(assets.id, profile.brand.logoAssetId)).limit(1))[0] : undefined;
+  const logoRow = profile.brand.logoAssetId ? (await db.select({ key: assets.storageKey }).from(assets).where(and(eq(assets.id, profile.brand.logoAssetId), eq(assets.productId, productId))).limit(1))[0] : undefined;
+  if (steps.includes("outro") && profile.brand.logoAssetId && !logoRow) throw new PipelineError("Configured logo is missing or belongs to another product", { step: "load" });
   const logoPath = logoRow ? await storage.localPathFor(logoRow.key) : undefined;
+
+  // B-roll, sound mixing and the end card each write a full copy of the clip,
+  // so enrichment needs several times the clip's own size. Check before the
+  // first encode rather than failing on the last copy.
+  const parentSize = parent.sizeBytes ?? 200 * 1024 * 1024;
+  await assertDiskSpace(process.env.SCRATCH_ROOT ?? os.tmpdir(), Math.max(1 * GB, parentSize * 6), "enrich");
 
   const result = await withScratch("enrich", async (scratch) => {
     // Work on a copy: broll_pipeline.py writes `edit_<stem>/` beside its input.
@@ -49,26 +67,33 @@ export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
     const applied: EnrichStep[] = [];
     const skipped: Record<string, string> = {};
     let current = clip;
-    const soft = async (step: EnrichStep, fn: () => Promise<string>) => {
-      try {
-        current = await fn();
-        applied.push(step);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        skipped[step] = msg;
-        await ctx.event("warn", `${step} skipped: ${msg}`, undefined, step);
-      }
+    const applyStep = async (step: EnrichStep, fn: () => Promise<string>) => {
+      ctx.signal.throwIfAborted();
+      current = await fn();
+      applied.push(step);
     };
     const log = (step: string) => (l: string) => void ctx.event("debug", l, undefined, step);
 
     if (steps.includes("broll")) {
       await ctx.progress(30, "broll", "Sourcing B-roll");
-      await soft("broll", () => runBroll(current, { topic: cand.hook, transcriptJsonPath: transcriptJson, output: path.join(scratch, "clip_broll.mp4"), peoplePolicy: prefs.peoplePolicy, signal: ctx.signal, onLog: log("broll") }));
+      const snapshot = parent.metadata.textSnapshot as { version?: number; captionPreset?: string; colors?: { highlightColor?: string; strokeColor?: string }; titleOverlayKey?: string; titleBandPixels?: number } | undefined;
+      if (!snapshot || snapshot.version !== 1) throw new PipelineError("This clip predates saved text layouts. Start a new run from its source before adding B-roll to preserve its captions and title.", { step: "broll" });
+      const titleOverlayPath = snapshot.titleOverlayKey ? await storage.localPathFor(snapshot.titleOverlayKey) : undefined;
+      await applyStep("broll", () => runBroll(current, { topic: cand.hook, validateComposite: file => screenFinalClip(ctx, file), text: {
+        words: clipWords, captionPreset: snapshot.captionPreset ?? undefined,
+        colors: snapshot.colors ?? undefined, titleOverlayPath, captionOffsetY: snapshot.titleBandPixels ?? 0,
+      }, plan: async prompt => {
+        const response = await new AnthropicProvider().chat({ messages: [{ role: "user", content: prompt }], maxTokens: 8000 }, process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5-20250929", {
+          purpose: "broll_plan", signal: ctx.signal, log: ctx.log,
+          recordUsage: u => ctx.recordUsage({ ...u, accountId: profile.accountId, productId }),
+        });
+        return response.text;
+      }, transcriptJsonPath: transcriptJson, output: path.join(scratch, "clip_broll.mp4"), peoplePolicy: effectivePeoplePolicy, signal: ctx.signal, onLog: log("broll") }));
     }
 
     if (steps.includes("sfx")) {
       await ctx.progress(70, "sfx", "Mixing sound design");
-      await soft("sfx", async () => {
+      await applyStep("sfx", async () => {
         const kit = await ensureSfxKit(path.dirname(await storage.localPathFor("tmp/sfx-kit/riser.wav")), { signal: ctx.signal, onLog: log("sfx") });
         const kits = [kit, ...(process.env.SFX_EXTRA_KIT_DIR ? [process.env.SFX_EXTRA_KIT_DIR] : [])];
         const scenes = applied.includes("broll") ? brollScenePlanPath(clip) : undefined;
@@ -78,15 +103,16 @@ export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
 
     if (steps.includes("outro")) {
       await ctx.progress(85, "outro", "Rendering end card");
-      await soft("outro", async () => {
+      await applyStep("outro", async () => {
         const appName = profile.product.name.trim();
         if (!appName) throw new PipelineError("product has no name for the end card", { step: "outro" });
-        const clone = prefs.voice === "clone";
+        const voiceAudioPath = prefs.voice === "female" ? await femaleOutroSpeech(`Download ${appName}`, path.join(scratch, "outro-voice.mp3"), {
+          signal: ctx.signal, recordUsage: usage => ctx.recordUsage({ ...usage, accountId: profile.accountId, productId }),
+        }) : undefined;
         return runOutro(current, appName, path.join(scratch, "clip_final.mp4"), {
           logo: logoPath,
-          transcriptJson: clone ? transcriptJson : undefined,
-          ttsPython: clone ? process.env.TTS_PYTHON_BIN || NO_TTS_PYTHON : NO_TTS_PYTHON,
-          line: clone ? undefined : SILENT_OUTRO_LINE,
+          voice: prefs.voice,
+          voiceAudioPath,
           signal: ctx.signal,
           onLog: log("outro"),
         });
@@ -96,11 +122,14 @@ export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
     if (!applied.length) throw new PipelineError(`no enrichment step succeeded: ${JSON.stringify(skipped)}`, { step: "enrich" });
 
     await ctx.progress(95, "store", "storing enriched clip");
-    const key = keys.clip(projectId, candidateId, "enriched");
+    // A retry keeps its file identity; a new job must not replace an earlier derivative.
+    const key = keys.clip(projectId, candidateId, `enriched-${ctx.jobId}`);
+    const out = await validateEnrichedMedia(current, clip, steps.includes("outro"), ctx.signal);
+    await ctx.progress(96, "final_screening", "Checking finished clip and added media");
+    const outputScreening = await screenFinalClip(ctx, current);
     await storage.putFile(key, current, { contentType: "video/mp4" });
-    const out = await probeMedia(await storage.localPathFor(key), { signal: ctx.signal });
-    const id = newId();
-    await db.insert(assets).values({
+    let id = newId();
+    id = await saveGeneratedAsset(db, {
       id,
       productId,
       projectId,
@@ -119,11 +148,12 @@ export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
       approvalState: "pending",
       profileVersion: profile.version,
       jobId: ctx.jobId,
-      metadata: { ...(parent.metadata as Record<string, unknown>), steps: applied, requestedSteps: steps, skipped, voice: steps.includes("outro") ? prefs.voice : undefined, peoplePolicy: steps.includes("broll") ? prefs.peoplePolicy : undefined, derivedFrom: parent.id },
+      metadata: { ...(parent.metadata as Record<string, unknown>), outputScreening, steps: applied, requestedSteps: steps, skipped, voice: steps.includes("outro") ? prefs.voice : undefined, peoplePolicy: steps.includes("broll") ? effectivePeoplePolicy : undefined, derivedFrom: parent.id },
     });
     return { assetId: id, key, steps: applied, skipped };
   });
 
+  await reconcileShortsProject(db, productId, projectId);
   await ctx.progress(100, "done", "enriched clip in review");
   return result;
 }

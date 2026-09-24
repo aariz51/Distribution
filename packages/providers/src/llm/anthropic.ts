@@ -1,6 +1,7 @@
+import { withProviderSpend } from "@distribution/core/provider-budget";
 import type { CallContext, ChatProvider, ChatRequest, ChatResponse, ContentPart } from "../types";
 import { postJsonWithRetry } from "../policy";
-import { estimateChatUsd } from "../pricing";
+import { estimateChatUsd, reserveChatUsd } from "../pricing";
 
 interface AnthropicResponse { content?: { type: string; text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number } }
 
@@ -31,6 +32,10 @@ export class AnthropicProvider implements ChatProvider {
     return anthropicAuthHeaders() !== null;
   }
   async chat(req: ChatRequest, model: string, ctx: CallContext): Promise<ChatResponse> {
+    return withProviderSpend(reserveChatUsd(model, req, Math.min(req.maxTokens, ctx.maxOutputTokens ?? req.maxTokens), 5, false), () => this.chatReserved(req, model, ctx));
+  }
+
+  private async chatReserved(req: ChatRequest, model: string, ctx: CallContext): Promise<ChatResponse> {
     const started = Date.now();
     const headers = anthropicAuthHeaders();
     if (!headers) throw new Error("anthropic not configured");
@@ -53,8 +58,8 @@ export class AnthropicProvider implements ChatProvider {
     });
     const text = (data.content ?? []).map((c) => c.text ?? "").join("");
     const usage = { inputTokens: data.usage?.input_tokens ?? 0, outputTokens: data.usage?.output_tokens ?? 0 };
-    const { usd } = estimateChatUsd(model, usage.inputTokens, usage.outputTokens);
-    await ctx.recordUsage?.({ provider: "anthropic", model, kind: "chat", purpose: ctx.purpose, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usdEstimate: usd });
+    const usd = data.usage ? estimateChatUsd(model, usage.inputTokens, usage.outputTokens).usd : reserveChatUsd(model, req, maxTokens, 1, false);
+    await ctx.recordUsage?.({ provider: "anthropic", model, kind: "chat", purpose: ctx.purpose, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, usdEstimate: usd + reserveChatUsd(model, req, maxTokens, attempts - 1, false) });
     return { text, usage, provider: "anthropic", model, latencyMs: Date.now() - started, attempts };
   }
 }

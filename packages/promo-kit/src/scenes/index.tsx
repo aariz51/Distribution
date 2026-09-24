@@ -274,7 +274,7 @@ const Features: React.FC<SceneProps> = ({ scene }) => {
   ].filter((i) => i.t);
 
   const cardW = wide ? height * 0.3 : width * 0.84;
-  const cardH = wide ? height * 0.36 : width * 0.2;
+  const cardH = wide ? height * 0.40 : width * 0.30;
 
   return (
     <AbsoluteFill style={{ background: bgRadial(theme), opacity }}>
@@ -300,10 +300,10 @@ const Features: React.FC<SceneProps> = ({ scene }) => {
             return (
               <div key={item.t} style={{ opacity: e, transform: `translateY(${(1 - e) * 30}px) rotate(${rot}deg)` }}>
                 <GlassCard width={cardW} height={cardH} tint={item.tint} glow={alpha(item.tint, 0.25)}>
-                  <div style={{ padding: cardW * 0.09, display: "flex", flexDirection: "column", justifyContent: "flex-end", height: "100%", gap: cardW * 0.03 }}>
-                    <div style={{ width: cardW * 0.14, height: cardW * 0.14, borderRadius: cardW * 0.045, background: alpha(item.tint, 0.18), border: `2px solid ${alpha(item.tint, 0.4)}` }} />
-                    <div style={{ fontFamily: fontHead(theme), fontSize: cardW * 0.11, fontWeight: 800, color: theme.colors.ink, lineHeight: 1.1 }}>{item.t}</div>
-                    {item.s && <div style={{ fontFamily: fontBody(theme), fontSize: cardW * 0.062, color: theme.colors.inkSoft, lineHeight: 1.3 }}>{item.s}</div>}
+                  <div style={{ boxSizing: "border-box", padding: cardW * (wide ? 0.08 : 0.05), display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: cardW * 0.025 }}>
+                    <div style={{ flexShrink: 0, width: cardW * (wide ? 0.12 : 0.045), height: cardW * (wide ? 0.12 : 0.045), borderRadius: cardW * 0.02, background: alpha(item.tint, 0.18), border: `2px solid ${alpha(item.tint, 0.4)}` }} />
+                    <div style={{ fontFamily: fontHead(theme), fontSize: cardW * (wide ? 0.095 : 0.052) * Math.min(1, Math.sqrt(65 / Math.max(65, item.t.length))), fontWeight: 800, color: theme.colors.ink, lineHeight: 1.15, overflowWrap: "anywhere" }}>{item.t}</div>
+                    {item.s && <div style={{ fontFamily: fontBody(theme), fontSize: cardW * (wide ? 0.055 : 0.033), color: theme.colors.inkSoft, lineHeight: 1.3 }}>{item.s}</div>}
                   </div>
                 </GlassCard>
               </div>
@@ -400,15 +400,15 @@ const Dashboard: React.FC<SceneProps> = ({ scene, storyboard }) => {
   const float = bob(frame, 6, 150);
 
   const key = scene.screens?.[0] ?? Object.keys(storyboard.screens)[0] ?? "dashboard";
-  const phoneW = wide ? height * 0.52 : width * 0.62;
-  const cardW = wide ? height * 0.3 : width * 0.5;
+  const phoneW = wide ? height * 0.52 : width * 0.54;
+  const cardW = wide ? height * 0.3 : width * 0.44;
 
   return (
     <AbsoluteFill style={{ background: bgRadial(theme), opacity }}>
       <Bloom frame={frame} peak={3} rise={3} fall={12} color={theme.colors.white} />
       <AbsoluteFill style={{ flexDirection: wide ? "row" : "column", alignItems: "center", justifyContent: "center", gap: wide ? width * 0.05 : height * 0.04, padding: wide ? "0 8%" : `${height * 0.06}px 0` }}>
         {!wide && (
-          <div style={{ fontFamily: fontHead(theme), fontSize: width * 0.078, fontWeight: 800, color: theme.colors.ink, textAlign: "center", maxWidth: "80%" }}>
+          <div style={{ fontFamily: fontHead(theme), fontSize: width * 0.058, lineHeight: 1.15, fontWeight: 800, color: theme.colors.ink, textAlign: "center", maxWidth: "84%", overflowWrap: "anywhere" }}>
             {c(scene, "pre", "One calm")} <span style={{ color: accent }}>{c(scene, "accent", "place")}</span> {c(scene, "post", "for all of it.")}
           </div>
         )}
@@ -427,16 +427,16 @@ const Dashboard: React.FC<SceneProps> = ({ scene, storyboard }) => {
         <div
           style={{
             position: "absolute",
-            left: wide ? width * 0.42 : width * 0.56,
+            left: wide ? width * 0.42 : width - cardW - width * 0.05,
             top: wide ? height * 0.24 : height * 0.3,
             transform: `scale(${0.7 + callout * 0.3})`,
             opacity: callout,
           }}
         >
-          <GlassCard width={cardW} height={cardW * 0.42} tint={accent} glow={alpha(accent, 0.3)}>
-            <div style={{ padding: cardW * 0.08, display: "flex", flexDirection: "column", justifyContent: "center", height: "100%" }}>
-              <div style={{ fontFamily: fontHead(theme), fontSize: cardW * 0.13, fontWeight: 800, color: theme.colors.ink }}>{c(scene, "chip")}</div>
-              <div style={{ fontFamily: fontBody(theme), fontSize: cardW * 0.075, color: theme.colors.inkSoft }}>{c(scene, "chipSub")}</div>
+          <GlassCard width={cardW} height={cardW * 0.6} tint={accent} glow={alpha(accent, 0.3)}>
+            <div style={{ padding: cardW * 0.08, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "center", gap: cardW * 0.025, height: "100%", overflowWrap: "anywhere" }}>
+              <div style={{ fontFamily: fontHead(theme), fontSize: cardW * 0.085, lineHeight: 1.12, fontWeight: 800, color: theme.colors.ink }}>{c(scene, "chip")}</div>
+              <div style={{ fontFamily: fontBody(theme), fontSize: cardW * 0.055, lineHeight: 1.2, color: theme.colors.inkSoft }}>{c(scene, "chipSub")}</div>
             </div>
           </GlassCard>
         </div>

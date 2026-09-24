@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Platform } from "@distribution/core";
 import { requireSession } from "@/lib/auth";
 import { handler, json, NotFound } from "@/lib/api";
 import { and, assetCopy, assets, db, desc, eq, products, sql } from "@/lib/db";
@@ -30,7 +31,8 @@ export const POST = handler(async (req, ctx: Ctx) => {
   const body = (await req.json()) as { regenerate?: boolean; platforms?: string[] } | z.infer<typeof Edit>;
   if ("regenerate" in body && body.regenerate) {
     const queue = await getQueue();
-    const platforms = body.platforms?.length ? body.platforms : ["instagram", "tiktok", "youtube", "x", "linkedin"];
+    const requested = z.array(Platform).max(10).optional().parse(body.platforms);
+    const platforms: Array<z.infer<typeof Platform>> = [...new Set(requested?.length ? requested : ["instagram", "tiktok", "youtube", "x", "linkedin"] as const)];
     const res = await queue.enqueue("copy.generate", { productId: asset.productId, assetId: id, platforms }, { productId: asset.productId, assetId: id });
     return json(res, { status: 202 });
   }

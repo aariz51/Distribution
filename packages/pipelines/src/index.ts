@@ -1,5 +1,8 @@
 import type { JobQueue } from "@distribution/jobs";
 import { brandPalette } from "./brand/palette";
+import { sourceSearch } from "./shorts/search";
+import { sourceDiscover } from "./shorts/discover";
+import { sourceProbe } from "./shorts/probe";
 import { sourceIngest } from "./shorts/ingest";
 import { sourceTranscribe } from "./shorts/transcribe";
 import { shortsRank } from "./shorts/rank";
@@ -21,6 +24,9 @@ export * from "./promo";
  *  handler here fail fast with "no handler registered" instead of hanging. */
 export function registerPipelines(queue: JobQueue): void {
   queue.register("brand.palette", brandPalette);
+  queue.register("source.discover", sourceDiscover);
+  queue.register("source.search", sourceSearch);
+  queue.register("source.probe", sourceProbe);
   queue.register("source.ingest", sourceIngest);
   queue.register("source.transcribe", sourceTranscribe);
   queue.register("shorts.rank", shortsRank);

@@ -1,0 +1,5 @@
+# Isolated Python 3.11 runtime; do not replace the AutoShorts interpreter.
+tensorflow==2.20.0
+tf-keras==2.20.1
+opencv-python-headless==4.12.0.88
+numpy==2.2.6

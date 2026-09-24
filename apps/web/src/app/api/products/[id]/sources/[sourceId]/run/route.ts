@@ -15,7 +15,5 @@ export const POST = handler(async (_req, ctx: Ctx) => {
   const src = (await db.select().from(sourceVideos).where(eq(sourceVideos.id, sourceId)).limit(1))[0];
   if (!src || src.productId !== productId) throw new NotFound("source");
   if (src.rights === "unknown") throw new ValidationError("rights unknown: set rights before processing");
-  if (src.status === "downloading") throw new ValidationError("source is already being processed");
-  await db.update(sourceVideos).set({ status: "queued", failureReason: null }).where(eq(sourceVideos.id, sourceId));
   return json(await startRun(productId, sourceId), { status: 202 });
 });

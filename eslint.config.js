@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/node_modules/**", "**/dist/**", "**/.next/**", "vendor/**", "apps/web/**", "**/*.d.ts", "packages/promo-kit/**"],
+    ignores: ["**/.venv*/**", "**/node_modules/**", "**/dist/**", "**/.next/**", "vendor/**", "apps/web/**", "**/*.d.ts", "packages/promo-kit/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

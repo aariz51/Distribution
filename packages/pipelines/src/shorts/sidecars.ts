@@ -1,8 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { access } from "node:fs/promises";
+import { access, writeFile, readFile, mkdir } from "node:fs/promises";
 import { PipelineError } from "@distribution/core";
-import { bin, run, type RunOptions } from "@distribution/media";
+import { bin, run, probeMedia, chunkWords, type RunOptions } from "@distribution/media";
 
 /**
  * The AutoShorts Python sidecars, vendored verbatim under vendor/autoshorts-py/assets.
@@ -97,8 +97,12 @@ export async function runCaptions(spec: CaptionSpecInput, opts: SidecarOptions =
 }
 
 /** title_bar.py — burns a persistent top title that avoids detected faces. */
-export async function runTitleBar(video: string, text: string, output: string, opts: SidecarOptions & { colors?: { fill?: string; stroke?: string } } = {}): Promise<string> {
+export async function runTitleBar(video: string, text: string, output: string, opts: SidecarOptions & { colors?: { fill?: string; stroke?: string }; artifactDirectory?: string } = {}): Promise<string> {
   const args = ["--video", video, "--text", text, "--output", output, "--assets", assetsDir()];
+  if (opts.artifactDirectory) {
+    await mkdir(opts.artifactDirectory, { recursive: true });
+    args.push("--overlay-output", path.join(opts.artifactDirectory, "title.png"), "--layout-output", path.join(opts.artifactDirectory, "layout.json"));
+  }
   if (opts.colors?.fill) args.push("--fill", opts.colors.fill);
   if (opts.colors?.stroke) args.push("--stroke", opts.colors.stroke);
   const { lastLine } = await runSidecar("title_bar.py", args, { ...opts, step: "title", timeoutMs: opts.timeoutMs ?? 20 * 60_000 });
@@ -148,23 +152,31 @@ export async function pickFrame(frames: string[], opts: SidecarOptions = {}): Pr
 /** creative.py compose mode — stdin JSON → PNG path. Layouts: bottom-anchor | top-banner | split | dark-editorial. */
 export async function runCreative(spec: { frame: string; headline: string; kicker?: string; attribution?: string; brand: CreativeBrand; layout: string; size: [number, number]; screenshot?: string; out: string }, opts: SidecarOptions = {}): Promise<string> {
   const { lastLine } = await runSidecar("creative.py", [], { ...opts, step: "creative", input: JSON.stringify(spec), timeoutMs: 5 * 60_000 });
-  return outputPath(lastLine, spec.out, "creative");
+  const file = await outputPath(lastLine, spec.out, "creative");
+  await validateCreative(file, spec.size, opts.signal);
+  return file;
 }
 
-/** A path that never exists: makes outro.py skip voice cloning cleanly. An empty
- *  string would not — Python's `Path("").exists()` is True and the spawn crashes. */
-export const NO_TTS_PYTHON = "/nonexistent/tts-python";
-/** `--line` for a silent end card: outro.py has no "no voice" switch and `--line ""`
- *  falls back to the default line, so a whitespace line is spoken (≈ nothing). */
-export const SILENT_OUTRO_LINE = " ";
+/** Verify the renderer's bytes before the library advertises a usable cover. */
+export async function validateCreative(file: string, size: [number, number], signal?: AbortSignal): Promise<void> {
+  const probe = await probeMedia(file, { signal });
+  if (probe.videoCodec !== "png" || probe.width !== size[0] || probe.height !== size[1] || !probe.sizeBytes) {
+    throw new PipelineError("Rendered cover is not a PNG at the requested dimensions", { step: "creative" });
+  }
+  await run(bin("ffmpeg"), ["-v", "error", "-xerror", "-err_detect", "explode", "-i", file, "-map", "0:v:0", "-f", "null", "-"], { signal, step: "creative", timeoutMs: 60_000 });
+}
 
 /** outro.py — branded end card (+ optional cloned voice line). */
-export async function runOutro(clip: string, appName: string, output: string, opts: SidecarOptions & { logo?: string; transcriptJson?: string; line?: string; ttsPython?: string } = {}): Promise<string> {
+export async function runOutro(clip: string, appName: string, output: string, opts: SidecarOptions & { logo?: string; transcriptJson?: string; line?: string; voiceAudioPath?: string; voice: "female" | "none" }): Promise<string> {
   const args = ["--clip", clip, "--app-name", appName, "--output", output, "--assets", assetsDir()];
   if (opts.logo) args.push("--logo", opts.logo);
   if (opts.transcriptJson) args.push("--transcript", opts.transcriptJson);
   if (opts.line) args.push("--line", opts.line);
-  args.push("--tts-python", opts.ttsPython || process.env.TTS_PYTHON_BIN || NO_TTS_PYTHON);
+  args.push("--voice", opts.voice === "female" ? "audio" : "none");
+  if (opts.voice === "female") {
+    if (!opts.voiceAudioPath) throw new PipelineError("Female voice audio is missing", { step: "outro" });
+    args.push("--voice-audio", opts.voiceAudioPath);
+  }
   const { lastLine } = await runSidecar("outro.py", args, { ...opts, step: "outro", timeoutMs: opts.timeoutMs ?? 30 * 60_000 });
   return outputPath(lastLine, output, "outro");
 }
@@ -182,6 +194,9 @@ export async function runCleanSource(video: string, output: string, opts: Sideca
 export type PeoplePolicy = "off" | "no-people" | "no-women";
 
 export interface BrollOptions extends SidecarOptions {
+  plan: (prompt: string) => Promise<string>;
+  validateComposite?: (file: string) => Promise<unknown>;
+  text?: BrollText;
   /** Steers scene selection; the Rust caller passed the candidate hook. */
   topic: string;
   /** Clip-relative `{"words":[{text,start,end}]}` JSON (see `rebaseWords`). Optional. */
@@ -219,16 +234,98 @@ export function brollEnv(opts: Pick<BrollOptions, "peoplePolicy" | "videoUseCach
  *  renders through the pinned video-use checkout. Writes `edit_<stem>/scene_plan.json`
  *  beside the clip, so callers should pass a clip that lives in scratch. */
 export async function runBroll(clip: string, opts: BrollOptions): Promise<string> {
-  const { lastLine } = await runSidecar("broll_pipeline.py", brollArgv(clip, opts), {
-    ...opts,
-    step: "broll",
-    timeoutMs: opts.timeoutMs ?? 60 * 60_000,
-    env: { ...(opts.env ?? {}), ...brollEnv(opts) },
-  });
-  return outputPath(lastLine, opts.output, "broll");
+  const env = { ...(opts.env ?? {}), ...brollEnv(opts), ANTHROPIC_API_KEY: "", ANTHROPIC_OAUTH_TOKEN: "" };
+  const prepared = await runSidecar("broll_pipeline.py", [...brollArgv(clip, opts), "--prepare-only"], { ...opts, env, step: "broll" });
+  const { prompt } = JSON.parse(prepared.lastLine) as { prompt: string | null };
+  if (!prompt) throw new PipelineError("B-roll requires a transcript with words", { step: "broll" });
+  const reply = await opts.plan(prompt);
+  const replyPath = path.join(path.dirname(clip), "broll-planning-reply.txt");
+  await writeFile(replyPath, reply);
+  for (let attempt = 0; ; attempt++) {
+    const { lastLine } = await runSidecar("broll_pipeline.py", [...brollArgv(clip, opts), "--planning-reply", replyPath, ...(attempt ? ["--render-existing"] : []), ...(opts.text ? ["--external-text"] : [])], {
+      ...opts, step: "broll", timeoutMs: opts.timeoutMs ?? 60 * 60_000, env,
+    });
+    const rendered = await outputPath(lastLine, opts.output, "broll");
+    const composite = opts.text ? await restoreBrollText(clip, rendered, opts.text, opts) : rendered;
+    try {
+      await opts.validateComposite?.(composite);
+      return composite;
+    } catch (error) {
+      const report = error instanceof PipelineError ? error.details?.screening as { visual?: { atSec?: number }; audio?: { status?: string } } | undefined : undefined;
+      const atSec = report?.visual?.atSec;
+      if (report?.audio?.status !== "allowed" || typeof atSec !== "number" || !Number.isFinite(atSec)) throw error;
+      const planPath = brollScenePlanPath(clip);
+      const plan = JSON.parse(await readFile(planPath, "utf8"));
+      if (!replaceBlockedStockScene(plan, atSec)) throw error;
+      await writeFile(planPath, JSON.stringify(plan));
+      opts.onLog?.(`Replacing blocked stock scene at ${atSec}s with the original; rebuilding and screening the full composite`);
+    }
+  }
+}
+
+/** Remove only the offending replacement; never turn a no-stock result into success. */
+export function replaceBlockedStockScene(plan: { scenes: { kind: string; start: number; end: number; [key: string]: unknown }[] }, atSec: number): boolean {
+  if (!Number.isFinite(atSec) || !Array.isArray(plan.scenes)) return false;
+  const scene = plan.scenes.find(s => s.kind === "video" && s.start <= atSec && atSec < s.end);
+  if (!scene || plan.scenes.filter(s => s.kind === "video").length < 2) return false;
+  scene.kind = "source";
+  for (const key of ["file", "offset", "source_url", "crop_x", "crop_y"]) delete scene[key];
+  scene.description = "Original footage replacing a stock scene blocked by composite screening";
+  return true;
 }
 
 /** Where broll_pipeline.py leaves its scene plan for `clip` (consumed by sfx_mix.py --scenes). */
 export function brollScenePlanPath(clip: string): string {
   return path.join(path.dirname(clip), `edit_${path.basename(clip, path.extname(clip))}`, "scene_plan.json");
+}
+
+
+export interface BrollText {
+  words: { text: string; start: number; end: number }[];
+  captionPreset?: string;
+  colors?: CaptionSpecInput["colors"];
+  title?: string;
+  titleStroke?: string;
+  titleOverlayPath?: string;
+  captionOffsetY?: number;
+}
+
+/** Draw exact text only on replacement scenes; source scenes already carry their text. */
+export async function restoreBrollText(source: string, rendered: string, text: BrollText, opts: SidecarOptions = {}): Promise<string> {
+  const plan = JSON.parse(await readFile(brollScenePlanPath(source), "utf8")) as { scenes: { kind: string; start: number; end: number }[] };
+  const replacements = plan.scenes.filter(scene => scene.kind === "video");
+  if (!replacements.length) throw new PipelineError("B-roll contains no stock footage", { step: "broll" });
+  for (const scene of replacements) if (!Number.isFinite(scene.start) || !Number.isFinite(scene.end) || scene.start < 0 || scene.end <= scene.start) throw new PipelineError("Invalid B-roll scene timing", { step: "broll" });
+  const enable = replacements.map(scene => `gte(t,${scene.start})*lt(t,${scene.end})`).join("+");
+  const media = await probeMedia(rendered, { signal: opts.signal });
+  const dir = path.join(path.dirname(source), "broll-text");
+  await mkdir(dir, { recursive: true });
+  const inputs = ["-i", rendered];
+  const filters: string[] = [];
+  let base = "0:v", index = 1;
+  const offset = text.captionOffsetY ?? 0;
+  if (!Number.isInteger(offset) || offset < 0 || offset >= media.height!) throw new PipelineError("Invalid persisted title band", { step: "broll" });
+  if (offset) {
+    filters.push(`[0:v]drawbox=x=0:y=0:w=iw:h=${offset}:color=black:t=fill:enable='${enable}'[band]`);
+    base = "band";
+  }
+  if (text.captionPreset) {
+    const chunks = chunkWords(text.words, 0, media.durationSec);
+    if (!chunks.length) throw new PipelineError("Cannot restore captions without transcript words", { step: "broll" });
+    const captions = await runCaptions({ width: media.width!, height: media.height!, duration: media.durationSec, style: text.captionPreset, chunks, outDir: path.join(dir, "captions"), colors: text.colors }, opts);
+    inputs.push("-f", "concat", "-safe", "0", "-i", captions);
+    filters.push(`[${base}][${index}:v]overlay=0:${offset}:format=auto:shortest=0:enable='${enable}'[text${index}]`);
+    base = `text${index++}`;
+  }
+  if (text.title || text.titleOverlayPath) {
+    const png = text.titleOverlayPath ?? path.join(dir, "title.png");
+    if (!text.titleOverlayPath) await runSidecar("title_bar.py", ["--video", source, "--text", text.title!, "--assets", assetsDir(), "--png-only", png, "--fill", "#FFFFFF", "--stroke", text.titleStroke ?? "#000000"], opts);
+    inputs.push("-loop", "1", "-i", png);
+    filters.push(`[${base}][${index}:v]overlay=0:0:format=auto:enable='${enable}'[text${index}]`);
+    base = `text${index}`;
+  }
+  if (!filters.length) return rendered;
+  const output = path.join(dir, "restored.mp4");
+  await run(bin("ffmpeg"), ["-y", "-v", "error", ...inputs, "-filter_complex", filters.join(";"), "-map", `[${base}]`, "-map", "0:a?", "-t", String(media.durationSec), "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", output], { ...opts, timeoutMs: opts.timeoutMs ?? 20 * 60_000, step: "broll_text" });
+  return output;
 }

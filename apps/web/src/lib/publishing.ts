@@ -1,6 +1,7 @@
+import { youtubeCover } from "@distribution/pipelines/publishing-cover";
 import { canTransition, newId, PipelineError, ValidationError } from "@distribution/core";
 import { PostizClient, decryptSecret, encryptSecret, platformOf, type Integration } from "@distribution/publishing";
-import { and, asc, assetCopy, assets, db, desc, eq, inArray, postizConnections, products, publishSchedule, sql } from "./db";
+import { and, asc, assetCopy, assets, db, desc, eq, inArray, jobs, postizConnections, products, publishSchedule, sql } from "./db";
 import { getQueue } from "./queue";
 import { NotFound } from "./api";
 
@@ -109,6 +110,7 @@ export interface ScheduleView {
   scheduledFor: string;
   status: string;
   publishedUrl: string | null;
+  postizPostId: string | null;
   lastError: string | null;
   attempts: number;
   hook: string | null;
@@ -134,6 +136,7 @@ export async function listSchedule(productId: string, accountId: string): Promis
     scheduledFor: s.scheduledFor.toISOString(),
     status: s.status,
     publishedUrl: s.publishedUrl,
+    postizPostId: s.postizPostId,
     lastError: s.lastError,
     attempts: s.attempts,
     hook: c?.hook ?? ((a.metadata as { hook?: string }).hook ?? null),
@@ -154,66 +157,102 @@ export interface ScheduleInput {
  * rather than at the provider.
  */
 export async function scheduleAsset(accountId: string, input: ScheduleInput): Promise<ScheduleView[]> {
-  const asset = (await db.select().from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
-  if (!asset) throw new NotFound("asset");
-  if (asset.status !== "approved" && asset.status !== "scheduled") {
-    throw new ValidationError(`asset is ${asset.status}; approve it before scheduling`);
-  }
   if (input.channelIds.length === 0) throw new ValidationError("pick at least one channel");
   if (Number.isNaN(input.scheduledFor.getTime())) throw new ValidationError("invalid scheduled time");
-
   const { connectionId } = await clientFor(accountId, input.connectionId);
-  const channels = await listChannels(accountId);
-  const product = (await db.select().from(products).where(eq(products.id, asset.productId)).limit(1))[0];
-  const leadMinutes = Number((product?.publishing as { leadTimeMinutes?: number } | undefined)?.leadTimeMinutes ?? 30);
-
-  const copies = await db.select().from(assetCopy).where(eq(assetCopy.assetId, input.assetId)).orderBy(desc(assetCopy.version));
-  const created: string[] = [];
-  for (const channelId of input.channelIds) {
-    const ch = channels.find((c) => c.id === channelId);
-    if (!ch) throw new ValidationError(`unknown channel ${channelId}`);
-    const copyRow = copies.find((c) => c.platform === ch.platform);
-    if (!copyRow) throw new ValidationError(`no ${ch.platform} copy for this asset — generate copy first`);
-    const id = newId();
-    await db.insert(publishSchedule).values({
-      id,
-      assetId: input.assetId,
-      postizConnectionId: connectionId,
-      channelId,
-      platform: ch.platform,
-      copyId: copyRow.id,
-      scheduledFor: input.scheduledFor,
-      status: "scheduled",
-    });
-    created.push(id);
-  }
-
-  if (asset.status !== "scheduled") {
-    if (!canTransition(asset.status, "scheduled")) throw new ValidationError(`cannot move ${asset.status} → scheduled`);
-    await db.update(assets).set({ status: "scheduled", scheduledFor: input.scheduledFor, platforms: [...new Set(input.channelIds.map((id) => channels.find((c) => c.id === id)?.platform ?? "").filter(Boolean))], updatedAt: sql`now()` }).where(eq(assets.id, input.assetId));
-  }
-
   const queue = await getQueue();
-  const runAt = new Date(input.scheduledFor.getTime() - leadMinutes * 60_000);
-  for (const id of created) {
-    await queue.enqueue("publish.post", { scheduleId: id }, { productId: asset.productId, assetId: input.assetId, singletonKey: `publish:${id}`, startAfter: runAt > new Date() ? runAt : undefined });
-  }
-  return (await listSchedule(asset.productId, accountId)).filter((s) => created.includes(s.id));
+  const result = await db.transaction(async tx => {
+    const owned = (await tx.select({ asset: assets, product: products }).from(assets)
+      .innerJoin(products, eq(products.id, assets.productId))
+      .where(and(eq(assets.id, input.assetId), eq(products.accountId, accountId))).for("update"))[0];
+    if (!owned) throw new NotFound("asset");
+    const { asset, product } = owned;
+    if (asset.status !== "approved" && asset.status !== "scheduled") throw new ValidationError(`asset is ${asset.status}; approve it before scheduling`);
+    const connection = (await tx.select().from(postizConnections).where(and(eq(postizConnections.id, connectionId), eq(postizConnections.accountId, accountId))))[0];
+    if (!connection) throw new NotFound("Postiz connection");
+    const channels = toChannels(connection.channels as Integration[]);
+    const copies = await tx.select().from(assetCopy).where(eq(assetCopy.assetId, input.assetId)).orderBy(desc(assetCopy.version));
+    const existing = await tx.select().from(publishSchedule).where(and(
+      eq(publishSchedule.assetId, asset.id), eq(publishSchedule.postizConnectionId, connectionId),
+      eq(publishSchedule.scheduledFor, input.scheduledFor), sql`${publishSchedule.status} != 'cancelled'`,
+    ));
+    const planned = [...new Set(input.channelIds)].map(channelId => {
+      const channel = channels.find(c => c.id === channelId && !c.disabled);
+      if (!channel) throw new ValidationError(`unknown or disabled channel ${channelId}`);
+      const copy = copies.find(c => c.platform === channel.platform);
+      if (!copy) throw new ValidationError(`no ${channel.platform} copy for this asset — generate copy first`);
+      const previous = existing.find(s => s.channelId === channelId);
+      return { channel, copy, id: previous?.id ?? newId(), reused: Boolean(previous) };
+    });
+    if (asset.mimeType.startsWith("video/") && planned.some(p => p.channel.platform === "youtube")) {
+      const covers = await tx.select().from(assets).where(and(eq(assets.productId, asset.productId), eq(assets.type, "thumbnail")));
+      youtubeCover(asset, covers);
+    }
+    const leadMinutes = Number(product.publishing.leadTimeMinutes ?? 30);
+    const runAt = new Date(input.scheduledFor.getTime() - leadMinutes * 60_000);
+    for (const { id, channel, copy, reused } of planned) {
+      if (reused) continue;
+      await tx.insert(publishSchedule).values({ id, assetId: asset.id, postizConnectionId: connectionId, channelId: channel.id, platform: channel.platform, copyId: copy.id, scheduledFor: input.scheduledFor, status: "scheduled" });
+      const job = await queue.enqueueInTransaction(tx, "publish.post", { scheduleId: id }, { productId: asset.productId, assetId: asset.id, singletonKey: `publish:${id}`, startAfter: runAt > new Date() ? runAt : undefined });
+      await tx.update(publishSchedule).set({ jobId: job.jobId }).where(eq(publishSchedule.id, id));
+    }
+    if (asset.status !== "scheduled" && !canTransition(asset.status, "scheduled")) throw new ValidationError(`cannot move ${asset.status} → scheduled`);
+    await tx.update(assets).set({ status: "scheduled", scheduledFor: input.scheduledFor, platforms: [...new Set([...asset.platforms, ...planned.map(p => p.channel.platform)])], updatedAt: sql`now()` }).where(eq(assets.id, asset.id));
+    return { productId: asset.productId, ids: planned.map(p => p.id) };
+  });
+  return (await listSchedule(result.productId, accountId)).filter(s => result.ids.includes(s.id));
+
 }
 
 /** Cancel before or after Postiz has the post; deletes it there when it exists. */
-export async function cancelSchedule(accountId: string, scheduleId: string): Promise<void> {
-  const row = (await db.select().from(publishSchedule).where(eq(publishSchedule.id, scheduleId)).limit(1))[0];
-  if (!row) throw new NotFound("schedule");
-  if (row.postizPostId) {
+export async function cancelSchedule(accountId: string, scheduleId: string, assetId: string): Promise<void> {
+  await db.transaction(async tx => {
+    const owned = (await tx.select({ row: publishSchedule }).from(publishSchedule)
+      .innerJoin(assets, eq(assets.id, publishSchedule.assetId))
+      .innerJoin(products, eq(products.id, assets.productId))
+      .where(and(eq(publishSchedule.id, scheduleId), eq(publishSchedule.assetId, assetId), eq(products.accountId, accountId))).limit(1).for("update"))[0];
+    if (!owned) throw new NotFound("schedule");
+    const row = owned.row;
+    if (row.status === "publishing" && row.attempts > 0 && !row.postizPostId) {
+      throw new ValidationError("Postiz submission is in progress or unconfirmed. Check its outcome before cancelling.");
+    }
+    if (row.postizPostId) {
+      const { client } = await clientFor(accountId, row.postizConnectionId);
+      await client.deletePost(row.postizPostId);
+    }
+    await tx.update(publishSchedule).set({ status: "cancelled", updatedAt: sql`now()` }).where(eq(publishSchedule.id, scheduleId));
+    const siblings = await tx.select().from(publishSchedule).where(eq(publishSchedule.assetId, row.assetId));
+    if (siblings.every((s) => s.status === "cancelled")) {
+      await tx.update(assets).set({ status: "approved", scheduledFor: null, updatedAt: sql`now()` }).where(eq(assets.id, row.assetId));
+    }
+  });
+}
+
+/** Attach only a provider-confirmed matching post; never issue another create. */
+export async function reconcileSchedule(accountId: string, scheduleId: string, assetId: string, postId: string) {
+  const queue = await getQueue();
+  return db.transaction(async tx => {
+    const owned = (await tx.select({ row: publishSchedule }).from(publishSchedule)
+      .innerJoin(assets, eq(assets.id, publishSchedule.assetId))
+      .innerJoin(products, eq(products.id, assets.productId))
+      .where(and(eq(publishSchedule.id, scheduleId), eq(publishSchedule.assetId, assetId), eq(products.accountId, accountId))).for("update"))[0];
+    if (!owned) throw new NotFound("schedule");
+    const row = owned.row;
+    if (row.status === "cancelled" || row.status === "published" || row.attempts === 0) throw new ValidationError("This schedule has no unresolved submission");
+    if (row.postizPostId && row.postizPostId !== postId) throw new ValidationError("This schedule already belongs to another Postiz post");
+    const active = await tx.select().from(jobs).where(sql`${jobs.payload}->>'scheduleId' = ${scheduleId} and ${jobs.status} in ('queued','started','progress','retrying') and ${jobs.type} in ('publish.post','publish.poll')`);
+    if (active.length) throw new ValidationError("A submission or status check is still running. Wait for it to finish.");
     const { client } = await clientFor(accountId, row.postizConnectionId);
-    await client.deletePost(row.postizPostId).catch(() => undefined);
-  }
-  await db.update(publishSchedule).set({ status: "cancelled", updatedAt: sql`now()` }).where(eq(publishSchedule.id, scheduleId));
-  const siblings = await db.select().from(publishSchedule).where(eq(publishSchedule.assetId, row.assetId));
-  if (siblings.every((s) => s.status === "cancelled")) {
-    await db.update(assets).set({ status: "approved", scheduledFor: null, updatedAt: sql`now()` }).where(eq(assets.id, row.assetId));
-  }
+    const provider = await client.getPost(postId, undefined, row.scheduledFor);
+    const raw = provider.raw as { id?: string; integration?: { id?: string }; content?: string };
+    if (raw.id !== postId || raw.integration?.id !== row.channelId) throw new ValidationError("Postiz did not return that post for this channel near the scheduled date");
+    const copy = row.copyId ? (await tx.select().from(assetCopy).where(eq(assetCopy.id, row.copyId)))[0] : undefined;
+    if (!copy) throw new ValidationError("The original post copy is unavailable; reconciliation requires manual investigation");
+    const expected = [copy.caption, copy.cta, copy.hashtags.map(h => `#${h}`).join(" ")].map(v => (v ?? "").trim()).filter(Boolean).join("\n\n");
+    if (raw.content?.trim() !== expected) throw new ValidationError("Postiz post content does not match this schedule");
+    await tx.update(publishSchedule).set({ postizPostId: postId, status: "publishing", lastError: null, updatedAt: sql`now()` }).where(eq(publishSchedule.id, scheduleId));
+    return queue.enqueueInTransaction(tx, "publish.poll", { scheduleId }, { assetId, singletonKey: `reconcile:${scheduleId}:${newId()}` });
+  });
 }
 
 export interface AutoFillSlot {

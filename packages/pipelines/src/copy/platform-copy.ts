@@ -1,3 +1,4 @@
+import { fitGeneratedCaption } from "./caption";
 import { z } from "zod";
 import { PipelineError, productContextBlock, type ProductProfile } from "@distribution/core";
 import { getLlm, type CallContext } from "@distribution/providers";
@@ -42,6 +43,7 @@ export interface CopyInput {
 
 export function buildCopyPrompt(input: CopyInput): { system: string; user: string } {
   const prefs = input.profile.contentPreferences;
+  const responseShape = JSON.stringify({ platforms: Object.fromEntries(input.platforms.map(platform => [platform, { hook: "one-line hook", title: "title or empty string", caption: "post caption", description: "description or empty string", hashtags: [], cta: "short call to action" }])) });
   const rules = input.platforms
     .map((p) => {
       const r = PLATFORM_RULES[p] ?? PLATFORM_RULES.instagram!;
@@ -59,8 +61,12 @@ Hard rules:
 - ${hashtagPolicy} Hashtags are lowercase, no spaces, without the # sign in the JSON.
 - The CTA is one short sentence that fits the platform (e.g. "Link in bio", "Free on the App Store").
 ${input.attribution ? `- Include this attribution line verbatim at the end of every caption: "${input.attribution}"` : ""}
-Respond with a single JSON object: {"platforms": {"<platform>": {"hook","title","caption","description","hashtags":[],"cta"}}} with exactly the requested platforms as keys.`;
-  const user = `${productContextBlock(input.profile)}
+Return copy only for these social platforms: ${input.platforms.join(", ")}. Product availability on iOS, Android or the web is background context, never an output platform.
+Respond with a single valid JSON object matching this shape. Replace the field descriptions with your written copy; keep exactly these platform keys:
+${responseShape}`;
+  const user = `REQUESTED SOCIAL PLATFORMS: ${input.platforms.join(", ")}
+
+${productContextBlock(input.profile).replace(/^PLATFORMS:/m, "PRODUCT AVAILABILITY:")}
 
 ASSET: ${input.assetKind}${input.durationSec ? `, ${Math.round(input.durationSec)}s` : ""}
 ${input.hook ? `HOOK USED IN THE VIDEO: ${input.hook}\n` : ""}
@@ -69,7 +75,7 @@ WHAT IS SAID / SHOWN:
 ${input.transcriptExcerpt.slice(0, 6000)}
 """
 
-PLATFORMS AND RULES:
+SOCIAL PLATFORMS AND RULES:
 ${rules}
 
 LANGUAGE: ${prefs.languages[0] ?? "en"}`;
@@ -88,7 +94,7 @@ export async function generatePlatformCopy(input: CopyInput, ctx: CallContext): 
     const c = out.data.platforms[p];
     if (!c) throw new PipelineError(`copy missing for platform ${p}`, { retrySafe: true, step: "copy" });
     const r = PLATFORM_RULES[p];
-    result[p] = { ...c, hashtags: c.hashtags.map((h) => h.replace(/^#/, "").toLowerCase()), caption: r ? c.caption.slice(0, r.captionMax) : c.caption, title: r && r.titleMax ? c.title.slice(0, r.titleMax) : c.title };
+    result[p] = { ...c, ...fitGeneratedCaption(c, r?.captionMax ?? 2200, input.attribution, p), title: r && r.titleMax ? c.title.slice(0, r.titleMax) : "" };
   }
   return result;
 }

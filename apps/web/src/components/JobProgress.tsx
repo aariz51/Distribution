@@ -1,4 +1,5 @@
 "use client";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Pill } from "@/components/ui/Pill";
@@ -24,8 +25,10 @@ interface Ev {
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 
 export function JobProgress({ jobId, initial, onDone, compact }: { jobId: string; initial: Status; onDone?: (s: Status) => void; compact?: boolean }) {
+  const router = useRouter();
   const [status, setStatus] = useState<Status>(initial);
   const [events, setEvents] = useState<Ev[]>([]);
+  const [disconnected, setDisconnected] = useState(false);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -38,9 +41,11 @@ export function JobProgress({ jobId, initial, onDone, compact }: { jobId: string
       if (TERMINAL.has(s.status)) {
         es.close();
         onDone?.(s);
+        router.refresh();
       }
     });
-    es.onerror = () => es.close();
+    es.onopen = () => setDisconnected(false);
+    es.onerror = () => setDisconnected(true); // EventSource retries and resumes from Last-Event-ID.
     return () => es.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
@@ -76,6 +81,7 @@ export function JobProgress({ jobId, initial, onDone, compact }: { jobId: string
         </span>
       </div>
       <ProgressBar value={pct} tone={tone} className="mt-2" indeterminate={status.status === "queued"} />
+      {live && disconnected && <p className="mt-2 text-xs text-muted">Connection lost. Reconnecting to job updates…</p>}
       {status.status === "failed" && status.error?.message && <p className="mt-2 text-xs text-red-600">{status.error.message}</p>}
       {status.attempts > 1 && <p className="mt-1 text-[11px] text-faint tabular-nums">attempt {status.attempts}</p>}
       {open && (

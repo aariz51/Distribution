@@ -71,3 +71,10 @@ export async function extractAudio16k(src: string, out: string, opts: { signal?:
     },
   });
 }
+
+/** Decode every selected packet before registering a generated video as usable. */
+export async function assertDecodableVideo(file: string, durationSec: number, signal?: AbortSignal) {
+  await run(bin("ffmpeg"), ["-v", "error", "-xerror", "-err_detect", "explode", "-i", file, "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"], {
+    signal, step: "validate", timeoutMs: Math.max(120_000, Math.ceil(durationSec * 5000)),
+  });
+}

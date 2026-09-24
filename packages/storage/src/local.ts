@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import type { PutOptions, StorageAdapter, StoredObject } from "./adapter";
@@ -45,18 +46,28 @@ export class LocalStorage implements StorageAdapter {
 
   async putFile(key: string, srcPath: string, opts?: PutOptions): Promise<StoredObject> {
     const p = await this.localPathFor(key);
-    if (path.resolve(srcPath) !== p) await copyFile(srcPath, p);
+    if (path.resolve(srcPath) !== p) {
+      const staged = `${p}.partial-${randomUUID()}`;
+      try {
+        await copyFile(srcPath, staged);
+        await rename(staged, p);
+      } finally { await rm(staged, { force: true }); }
+    }
     return this.commit(key, opts);
   }
 
   async putBuffer(key: string, data: Buffer, opts?: PutOptions): Promise<StoredObject> {
     const p = await this.localPathFor(key);
-    await writeFile(p, data);
+    const staged = `${p}.partial-${randomUUID()}`;
+    try {
+      await writeFile(staged, data);
+      await rename(staged, p);
+    } finally { await rm(staged, { force: true }); }
     return this.commit(key, opts);
   }
 
-  async getStream(key: string): Promise<Readable> {
-    return createReadStream(this.abs(key));
+  async getStream(key: string, range?: { start: number; end: number }): Promise<Readable> {
+    return createReadStream(this.abs(key), range);
   }
 
   async getBuffer(key: string): Promise<Buffer> {

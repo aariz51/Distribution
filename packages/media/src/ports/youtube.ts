@@ -223,7 +223,7 @@ export function downloadTemplate(destDir: string): string {
 }
 
 /** `download` argv (before the player-client prefix). */
-export function downloadArgv(id: VideoId, destDir: string): string[] {
+export function downloadArgv(id: VideoId, destDir: string, maxFileSize?: string): string[] {
   return [
     "--format",
     YTDLP_FORMAT,
@@ -239,6 +239,11 @@ export function downloadArgv(id: VideoId, destDir: string): string[] {
     "--print",
     "after_move:filepath",
     "--no-simulate",
+    "--progress",
+    "--newline",
+    "--socket-timeout",
+    "20",
+    ...(maxFileSize ? ["--max-filesize", maxFileSize] : []),
     "--",
     canonicalUrl(id),
   ];
@@ -269,8 +274,9 @@ export interface VideoMeta {
 /** The CC check at `youtube.rs:309-315`. */
 export function reuseAllowed(licenseText: string | null | undefined): boolean {
   if (licenseText === null || licenseText === undefined) return false;
-  const l = licenseText.toLowerCase();
-  return l.includes("creative commons") || l.includes("reuse allowed");
+  const l = licenseText.toLowerCase().trim().replace(/\s+/g, " ");
+  return /^creative commons attribution licen[cs]e(?: \(reuse allowed\))?$/.test(l)
+    || /^cc by(?: [1-4]\.0)?$/.test(l);
 }
 
 /** `probe`'s stdout (`--dump-json`) into `VideoMeta`. Throws `Other` when the

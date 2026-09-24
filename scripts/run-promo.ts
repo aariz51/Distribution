@@ -1,3 +1,4 @@
+import { loadProfile } from "../packages/pipelines/src/shorts/common";
 /**
  * End-to-end promo run, deterministic path: no LLM, no API key.
  *   pnpm exec tsx scripts/run-promo.ts <productId> [durationSec]
@@ -13,19 +14,21 @@ import { newId } from "@distribution/core";
 async function main() {
   const productId = process.argv[2];
   const durationSec = Number(process.argv[3] ?? 24);
+  const referenceId = process.argv[4];
   if (!productId) throw new Error("usage: run-promo.ts <productId> [durationSec]");
   const db = getDb();
   const product = (await db.select().from(products).where(eq(products.id, productId)).limit(1))[0];
   if (!product) throw new Error(`no product ${productId}`);
 
+  const profileSnapshot = await loadProfile(db, productId);
   const projectId = newId();
-  await db.insert(projects).values({ id: projectId, productId, kind: "promo", profileVersion: product.version, params: { durationSec }, status: "running" });
+  await db.insert(projects).values({ id: projectId, productId, kind: "promo", referenceId, profileVersion: product.version, params: { durationSec, profileSnapshot, ...(referenceId ? { referenceId, useLlm: true } : {}) }, status: "running" });
   console.log(`project ${projectId} for ${product.slug} (${durationSec}s)`);
 
   const queue = await JobQueue.start(db);
   registerPromo(queue);
   await queue.work(["llm", "render", "media"]);
-  await queue.enqueue("promo.run", { productId, projectId, durationSec }, { productId, projectId, singletonKey: `promo.run:${projectId}` });
+  await queue.enqueue("promo.run", { productId, projectId, durationSec, ...(referenceId ? { referenceId } : {}) }, { productId, projectId, singletonKey: `promo.run:${projectId}` });
 
   const started = Date.now();
   let lastLine = "";
@@ -38,15 +41,17 @@ async function main() {
     }
     const failed = rows.filter((r) => r.status === "failed");
     if (failed.length) {
+      process.exitCode = 1;
       console.error("FAILED:", JSON.stringify(failed.map((f) => f.err), null, 2));
       break;
     }
-    const done = rows.length >= 6 && rows.every((r) => r.status === "completed" || r.status === "cancelled");
+    const done = rows.some(r => r.type === "promo.finalize" && r.status === "completed") && rows.every(r => r.status === "completed");
     if (done) {
       console.log("all promo jobs completed");
       break;
     }
     if (Date.now() - started > 25 * 60_000) {
+      process.exitCode = 1;
       console.error("timed out");
       break;
     }

@@ -118,7 +118,7 @@ export const PublishingPrefs = z.object({
 export type PublishingPrefs = z.infer<typeof PublishingPrefs>;
 
 export const PeoplePolicy = z.enum(["off", "no-people", "no-women"]);
-export const VoicePreference = z.enum(["clone", "none"]);
+export const VoicePreference = z.preprocess(value => value === "clone" ? "female" : value, z.enum(["female", "none"]));
 
 /** Content preferences have NO defaults for policy fields on purpose (Gate 1 OQ1):
  *  the intake form must collect them. Technical toggles do have defaults. */

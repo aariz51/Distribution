@@ -30,9 +30,10 @@ export function SourcesPanel({ productId, sources }: { productId: string; source
     setError(null);
     setBusy("Adding…");
     try {
-      const r = await fetch(`/api/products/${productId}/sources`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, rights, attestation: attestation || undefined }) });
+      const r = await fetch(`/api/products/${productId}/sources`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url, rights, attestation: attestation ? { text: attestation } : undefined }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? "failed");
+      if (j.processing?.status === "failed") setError(j.processing.error);
       setUrl("");
       setAttestation("");
       router.refresh();
@@ -52,6 +53,8 @@ export function SourcesPanel({ productId, sources }: { productId: string; source
       fd.set("rights", "owned");
       const r = await fetch(`/api/products/${productId}/sources`, { method: "POST", body: fd });
       if (!r.ok) throw new Error(((await r.json()) as { error?: string }).error ?? "upload failed");
+      const result = await r.json();
+      if (result.processing?.status === "failed") setError(result.processing.error);
       setFile(null);
       router.refresh();
     } catch (e) {

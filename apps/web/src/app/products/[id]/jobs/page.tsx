@@ -1,8 +1,10 @@
+import { JobActions } from "@/components/JobActions";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getProduct } from "@/lib/products";
 import { listJobs, type JobView } from "@/lib/library";
 import { AppShell, PageHeader } from "@/components/AppShell";
+import { WorkerStatus } from "@/components/WorkerStatus";
 import { JobProgress } from "@/components/JobProgress";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -42,6 +44,7 @@ export default async function JobsPage({ params, searchParams }: { params: Promi
 
   return (
     <AppShell email={session.email} product={{ id, name: product.product.name }}>
+      <WorkerStatus />
       <PageHeader
         title="Jobs"
         description="Everything the pipeline is doing for this product, newest first."
@@ -98,6 +101,7 @@ export default async function JobsPage({ params, searchParams }: { params: Promi
                       </>
                     )}
                   </div>
+                  <JobActions jobId={j.id} type={j.type} status={j.status} retried={typeof j.result?.retryJobId === "string"} />
                 </li>
               );
             })}

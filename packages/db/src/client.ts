@@ -32,3 +32,8 @@ export async function closeDb(): Promise<void> {
   pool = undefined;
   db = undefined;
 }
+
+/** Session advisory locks must not consume the pool needed by the protected work. */
+export function createDedicatedClient(database: Db): pg.Client {
+  return new pg.Client({ ...database.$client.options, connectionTimeoutMillis: 10_000 });
+}

@@ -1,6 +1,6 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Field, HexChip, Select, TextArea, TextInput, Toggle } from "@/components/ui/Field";
 import { FileDrop } from "@/components/FileDrop";
@@ -25,6 +25,15 @@ export function IntakeWizard() {
   const [step, setStep] = useState<Step>(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const submitting = useRef(false);
+  const setup = useRef<{
+    key: string;
+    payload: ReturnType<typeof buildPayload>;
+    productId?: string;
+    uploads: Array<{ file: File; kind: string; key: string; done: boolean }>;
+    paletteQueued: boolean;
+  } | null>(null);
 
   // 1 — product
   const [name, setName] = useState("");
@@ -55,6 +64,7 @@ export function IntakeWizard() {
   const [referenceUrl, setReferenceUrl] = useState("");
   const [referenceRights, setReferenceRights] = useState<"unknown" | "owned" | "licensed" | "third_party_attested">("unknown");
   const [longFormUrls, setLongFormUrls] = useState("");
+  const [longFormRights, setLongFormRights] = useState<"" | "owned" | "licensed">("");
   const [channelUrl, setChannelUrl] = useState("");
 
   // 4 — publishing + content prefs
@@ -66,7 +76,7 @@ export function IntakeWizard() {
   const [broll, setBroll] = useState(false);
   const [sfx, setSfx] = useState(true);
   const [outro, setOutro] = useState(true);
-  const [voice, setVoice] = useState<"" | "clone" | "none">("");
+  const [voice, setVoice] = useState<"" | "female" | "none">("");
   const [peoplePolicy, setPeoplePolicy] = useState<"" | "off" | "no-people" | "no-women">("");
   const [cleanSource, setCleanSource] = useState(false);
   const [clipsPerSource, setClipsPerSource] = useState(8);
@@ -78,7 +88,7 @@ export function IntakeWizard() {
   const stepValid: Record<Step, boolean> = {
     0: name.trim().length > 0 && tagline.trim().length > 0 && category.trim().length > 0 && featureList.length > 0 && audience.trim().length > 0 && platforms.length > 0,
     1: logo !== null || screens.length > 0,
-    2: true,
+    2: !longFormUrls.trim() || longFormRights !== "",
     3: voice !== "" && peoplePolicy !== "",
     4: true,
   };
@@ -125,44 +135,56 @@ export function IntakeWizard() {
         hashtagStrategy: hashtags,
         languages: ["en"],
       },
-      // long-form URLs are ingested as source rows after the product exists
-      _longFormUrls: longFormUrls.split(/\s+/).filter(Boolean),
+      initialSources: longFormUrls.split(/\s+/).filter(Boolean).map(url => ({ url, rights: longFormRights })),
     };
   }
 
   async function submit() {
+    if (submitting.current) return;
+    submitting.current = true;
     setError(null);
-    setBusy("Creating product…");
+    setSubmitted(true);
+    setup.current ??= {
+      key: uuid(), payload: buildPayload(), paletteQueued: false,
+      uploads: [
+        ...(logo ? [{ file: logo, kind: "logo", key: uuid(), done: false }] : []),
+        ...screens.map(file => ({ file, kind: "screenshot", key: uuid(), done: false })),
+      ],
+    };
+    const pending = setup.current;
     try {
-      const payload = buildPayload();
-      const { _longFormUrls, ...profile } = payload;
-      void _longFormUrls; // Phase 2 wires these into source ingestion
-      const res = await fetch("/api/products", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(profile) });
-      if (!res.ok) throw new Error((await res.json()).error ?? "create failed");
-      const { product } = (await res.json()) as { product: { id: string } };
-      const upload = async (file: File, kind: string) => {
+      if (!pending.productId) {
+        setBusy("Creating product…");
+        const res = await fetch("/api/products", { method: "POST", headers: { "content-type": "application/json", "idempotency-key": pending.key }, body: JSON.stringify(pending.payload) });
+        if (!res.ok) {
+          // Validation did not create anything: let the user correct the frozen form.
+          // Unknown transport/server outcomes retain the key for a safe replay.
+          if (res.status === 400) { setup.current = null; setSubmitted(false); }
+          throw new Error((await res.json()).error ?? "Could not create the product");
+        }
+        pending.productId = ((await res.json()) as { product: { id: string } }).product.id;
+      }
+      for (const item of pending.uploads) {
+        if (item.done) continue;
+        setBusy(`Uploading ${item.file.name}…`);
         const fd = new FormData();
-        fd.set("kind", kind);
-        fd.set("file", file);
-        const r = await fetch(`/api/products/${product.id}/assets`, { method: "POST", body: fd });
-        if (!r.ok) throw new Error(`upload failed: ${file.name}`);
-      };
-      if (logo) {
-        setBusy("Uploading logo…");
-        await upload(logo, "logo");
+        fd.set("kind", item.kind); fd.set("file", item.file);
+        const response = await fetch(`/api/products/${pending.productId}/assets`, { method: "POST", headers: { "idempotency-key": item.key }, body: fd });
+        if (!response.ok) throw new Error(`Could not upload ${item.file.name}. Retry to finish setup.`);
+        item.done = true;
       }
-      for (const [i, s] of screens.entries()) {
-        setBusy(`Uploading screenshot ${i + 1}/${screens.length}…`);
-        await upload(s, "screenshot");
-      }
-      if (!colorsProvided && (logo || screens.length)) {
+      if (!pending.payload.brand.palette && pending.uploads.length && !pending.paletteQueued) {
         setBusy("Queuing palette sampling…");
-        await fetch(`/api/products/${product.id}/jobs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "brand.palette" }) });
+        const response = await fetch(`/api/products/${pending.productId}/jobs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "brand.palette" }) });
+        if (!response.ok) throw new Error("Assets are saved, but colour sampling could not start. Retry to finish setup.");
+        pending.paletteQueued = true;
       }
-      router.push(`/products/${product.id}`);
+      router.push(`/products/${pending.productId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(null);
+    } finally {
+      submitting.current = false;
     }
   }
 
@@ -213,7 +235,7 @@ export function IntakeWizard() {
             <li key={s}>
               <button
                 type="button"
-                disabled={i > step || busy !== null}
+                disabled={i > step || busy !== null || submitted}
                 onClick={() => setStep(i as Step)}
                 aria-current={state === "current" ? "step" : undefined}
                 className={cn(
@@ -380,10 +402,15 @@ export function IntakeWizard() {
                     </Select>
                   </Field>
                 )}
-                <Field label="Long-form videos to cut into shorts" optional htmlFor="f-long" hint="One URL per line. Each is probed for licence and rights before anything is downloaded.">
+                <Field label="Long-form videos to cut into shorts" optional htmlFor="f-long" hint="One YouTube URL per line. Saved to Sources; start processing there after setup.">
                   <TextArea id="f-long" rows={3} value={longFormUrls} onChange={(e) => setLongFormUrls(e.target.value)} placeholder="https://youtube.com/watch?v=…" className="font-mono text-[13px]" />
                 </Field>
-                <Field label="Your own YouTube channel" optional htmlFor="f-channel" hint="New uploads become clip sources.">
+                {longFormUrls.trim() && <Field label="Rights for these videos" htmlFor="f-long-rights">
+                  <Select id="f-long-rights" value={longFormRights} onChange={e => setLongFormRights(e.target.value as typeof longFormRights)}>
+                    <option value="">Choose rights</option><option value="owned">I made these videos</option><option value="licensed">I have a licence to reuse these videos</option>
+                  </Select>
+                </Field>}
+                <Field label="Your own YouTube channel" optional htmlFor="f-channel" hint="Saved as a source preference. Connected YouTube channels are checked daily. New videos wait for you to start processing.">
                   <TextInput id="f-channel" value={channelUrl} onChange={(e) => setChannelUrl(e.target.value)} placeholder="https://youtube.com/@yourchannel" />
                 </Field>
               </div>
@@ -415,7 +442,7 @@ export function IntakeWizard() {
                     <Select id="f-voice" value={voice} onChange={(e) => setVoice(e.target.value as typeof voice)}>
                       <option value="">Choose…</option>
                       <option value="none">No voice line</option>
-                      <option value="clone">Clone the speaker&apos;s voice from the clip</option>
+                      <option value="female">Natural female voice (AI-generated)</option>
                     </Select>
                   </Field>
                   <Field label="People policy" required hint="For B-roll and thumbnails." htmlFor="f-people">
@@ -458,11 +485,11 @@ export function IntakeWizard() {
 
         {/* Sticky footer */}
         <div className="sticky bottom-0 z-10 mt-4 -mx-1 flex items-center justify-between gap-3 rounded-[10px] border border-hairline bg-surface/95 px-4 py-3 shadow-[var(--shadow-raise)] backdrop-blur-[2px]">
-          <Button disabled={step === 0 || busy !== null} onClick={() => setStep((s) => (s - 1) as Step)}>
+          <Button disabled={step === 0 || busy !== null || submitted} onClick={() => setStep((s) => (s - 1) as Step)}>
             Back
           </Button>
           <div className="flex min-w-0 items-center gap-3">
-            {error && <p className="truncate text-xs text-red-600">{error}</p>}
+            {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
             {!stepValid[step] && step < 4 && !error && <p className="hidden text-xs text-faint sm:block">{step === 1 ? "Add a logo or at least one screenshot" : step === 3 ? "Choose voice and people policy" : "Fill the required fields"}</p>}
             {step < 4 ? (
               <Button variant="primary" disabled={!stepValid[step]} onClick={() => setStep((s) => (s + 1) as Step)}>
@@ -470,7 +497,7 @@ export function IntakeWizard() {
               </Button>
             ) : (
               <Button variant="primary" disabled={busy !== null} loading={busy !== null} onClick={submit}>
-                {busy ?? "Create product"}
+                {busy ?? (submitted ? "Retry setup" : "Create product")}
               </Button>
             )}
           </div>

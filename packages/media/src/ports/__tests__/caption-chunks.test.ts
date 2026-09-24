@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TranscriptWord } from "@distribution/core";
 import {
   DEFAULT_CAPTION_STYLE,
+  srtFromChunks,
   LEGACY_CAPTION_STYLES,
   MAX_WORDS,
   buildCaptionSpec,
@@ -179,5 +180,43 @@ describe("generateSrt / formatSrtTime (lib.rs)", () => {
 
   it("keeps the original casing and does not trim words", () => {
     expect(generateSrt([word(" a ", 0, 1), word("B", 1, 2)], 0, 5)).toBe("1\n00:00:00,000 --> 00:00:02,000\n a  B\n\n");
+  });
+});
+
+describe("srtFromChunks (the sidecar must describe the picture)", () => {
+  const words: TranscriptWord[] = [
+    { text: "The", start: 10.0, end: 10.2 },
+    { text: "FDA", start: 10.2, end: 10.5 },
+    { text: "allows", start: 10.5, end: 10.9 },
+    { text: "companies.", start: 10.9, end: 11.4 },
+    { text: "They", start: 12.6, end: 12.8 },
+    { text: "decide", start: 12.8, end: 13.2 },
+    { text: "themselves", start: 13.2, end: 13.9 },
+  ];
+
+  it("emits exactly one cue per rendered chunk", () => {
+    const chunks = chunkWords(words, 10, 14);
+    const cues = srtFromChunks(chunks).trim().split(/\n\n/).filter(Boolean);
+    expect(cues).toHaveLength(chunks.length);
+  });
+
+  it("carries each chunk's own text and timing, not a re-slice of the words", () => {
+    const chunks = chunkWords(words, 10, 14);
+    const srt = srtFromChunks(chunks);
+    const first = chunks[0]!;
+    expect(srt).toContain(formatSrtTime(first.start, first.end));
+    expect(srt).toContain(first.text);
+  });
+
+  it("never spans the pause that the burned-in captions break on", () => {
+    // 1.2s of silence sits between "companies." and "They"; a cue that covered
+    // both would be a subtitle drifting away from what is on screen.
+    for (const cue of srtFromChunks(chunkWords(words, 10, 14)).trim().split(/\n\n/)) {
+      expect(cue).not.toMatch(/COMPANIES\.\s+THEY/i);
+    }
+  });
+
+  it("skips blank chunks instead of writing empty cues", () => {
+    expect(srtFromChunks([{ text: "   ", start: 0, end: 1 }])).toBe("");
   });
 });

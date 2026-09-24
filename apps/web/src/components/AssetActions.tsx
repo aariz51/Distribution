@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Field";
 import { Pill } from "@/components/ui/Pill";
 import { cn } from "@/components/ui/cn";
+import { JobProgress } from "@/components/JobProgress";
 
 const DEFAULT_PLATFORMS = ["instagram", "tiktok", "youtube", "x", "linkedin"];
 
@@ -24,6 +25,7 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
+  const [copyJobId, setCopyJobId] = useState<string | null>(null);
   const choices = platforms.length ? platforms : DEFAULT_PLATFORMS;
   const [picked, setPicked] = useState<string[]>(choices);
 
@@ -58,6 +60,8 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
     try {
       const r = await fetch(`/api/assets/${asset.id}/copy`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ regenerate: true, platforms: picked }) });
       if (!r.ok) throw new Error(await readError(r));
+      const body = await r.json() as { jobId: string };
+      setCopyJobId(body.jobId);
       setCopyOpen(false);
       setOpen(true);
       router.refresh();
@@ -74,7 +78,7 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
   return (
     <div>
       <div className="flex flex-wrap items-center gap-1.5">
-        {!archived && !locked && asset.status !== "approved" && (
+        {!archived && !locked && asset.status === "review" && (
           <Button size="sm" variant="primary" loading={busy === "approve"} disabled={busy !== null} onClick={() => act("approve")}>
             Approve
           </Button>
@@ -94,7 +98,8 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
             Archive
           </Button>
         )}
-        <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setCopyOpen((o) => !o)} aria-expanded={copyOpen}>
+        {asset.status !== "failed" && <a href={asset.url} download className="rounded px-2 py-1 text-xs underline underline-offset-2">Download</a>}
+        <Button size="sm" variant="ghost" disabled={busy !== null || asset.status === "failed"} onClick={() => setCopyOpen((o) => !o)} aria-expanded={copyOpen}>
           {asset.copy.length ? "Regenerate copy" : "Generate copy"}
         </Button>
         {asset.copy.length > 0 && (
@@ -124,6 +129,9 @@ export function AssetActions({ asset, platforms }: { asset: AssetView; platforms
       )}
 
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {copyJobId && <div className="mt-3" aria-label="Copy generation">
+        <JobProgress key={copyJobId} jobId={copyJobId} initial={{ status: "queued", progressPct: 0, currentStep: null, attempts: 0, error: null, result: null }} />
+      </div>}
       {asset.approvalReason && asset.approvalState === "rejected" && <p className="mt-2 text-xs text-muted">Reason: {asset.approvalReason}</p>}
 
       {open && asset.copy.length > 0 && <CopyDrawer copy={asset.copy} />}

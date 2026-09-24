@@ -2,8 +2,11 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getProduct } from "@/lib/products";
 import { libraryCounts, listAssets } from "@/lib/library";
+import { listConnections } from "@/lib/publishing";
+import { Platform } from "@distribution/core";
 import type { AssetItem as AssetView } from "@/components/views";
 import { AppShell, PageHeader } from "@/components/AppShell";
+import { WorkerStatus } from "@/components/WorkerStatus";
 import { AssetActions } from "@/components/AssetActions";
 import { ButtonLink } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -30,11 +33,16 @@ export default async function LibraryPage({ params, searchParams }: { params: Pr
   const { status } = await searchParams;
   const product = await getProduct(session.accountId, id).catch(() => null);
   if (!product) notFound();
-  const [assets, counts] = await Promise.all([listAssets(id, { status: status || undefined }), libraryCounts(id)]);
-  const platforms = product.publishing.channelIds;
+  const [assets, counts, connections] = await Promise.all([listAssets(id, { status: status || undefined }), libraryCounts(id), listConnections(session.accountId)]);
+  const platforms = [...new Set([
+    ...connections.filter(c => !product.publishing.postizConnectionId || c.id === product.publishing.postizConnectionId)
+      .flatMap(c => c.channels).filter(c => !c.disabled && product.publishing.channelIds.includes(c.id)).map(c => c.platform),
+    ...product.publishing.cadence.map(rule => rule.platform),
+  ])].filter(platform => Platform.safeParse(platform).success);
 
   return (
     <AppShell email={session.email} product={{ id, name: product.product.name }}>
+      <WorkerStatus />
       <PageHeader title="Library" description="Every clip, promo cut, thumbnail and its platform copy. Approve here; scheduling follows." />
       <FilterPills param="status" options={FILTERS.map((f) => ({ ...f, count: f.value ? counts.byStatus[f.value] ?? 0 : counts.total }))} className="mb-6" />
 
@@ -65,7 +73,11 @@ function AssetCard({ asset: a, platforms }: { asset: AssetView; platforms: strin
   return (
     <article className="surface flex h-full flex-col overflow-hidden">
       <div className={`relative bg-[#0d1114] ${landscape ? "aspect-video" : "flex justify-center"}`}>
-        {isVideo ? (
+        {a.status === "failed" ? (
+          <div className={`grid ${frame} w-full place-items-center p-6 text-center text-sm text-white/70`}>
+            This asset is unavailable. Review the failure details below.
+          </div>
+        ) : isVideo ? (
           <video src={a.url} poster={a.thumbnailUrl ?? undefined} muted controls preload="metadata" playsInline className={`${landscape ? "h-full w-full" : "aspect-[9/16] h-auto max-h-[420px] w-auto"} object-contain`} />
         ) : isImage ? (
           // eslint-disable-next-line @next/next/no-img-element

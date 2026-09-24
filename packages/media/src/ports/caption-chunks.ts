@@ -178,3 +178,27 @@ export function generateSrt(words: readonly TranscriptWord[], startSec: number, 
 
   return srt;
 }
+
+/**
+ * SRT built from the very chunks that were burned into the picture.
+ *
+ * `generateSrt` is the faithful port of the desktop app's sidecar writer, which
+ * slices every three words regardless of pauses or punctuation. The overlay that
+ * actually reaches the video is cut by `chunkWords`, which breaks on a pause or
+ * a sentence end. Those two disagree, so the .srt a user downloads drifts out of
+ * sync with the captions they can see. Deriving the file from the same chunks
+ * makes the sidecar describe the picture.
+ */
+export function srtFromChunks(chunks: readonly Chunk[]): string {
+  let srt = "";
+  let index = 1;
+  for (const chunk of chunks) {
+    const text = chunk.text.trim();
+    if (!text) continue;
+    srt += `${index}\n`;
+    srt += `${formatSrtTime(chunk.start, chunk.end)}\n`;
+    srt += `${text}\n\n`;
+    index += 1;
+  }
+  return srt;
+}

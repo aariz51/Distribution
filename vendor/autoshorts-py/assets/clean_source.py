@@ -14,9 +14,9 @@ Both are handled here, before anything is cut:
   * Burned-in captions are found by looking for text that recurs in the same
     band of the frame across many samples -- the signature of a subtitle strip,
     which a moving picture does not produce -- and that band is removed by
-    cropping it away or, when it sits inside the action, by inpainting.
-  * Speech is isolated from music with a vocal separator when one is available,
-    falling back to a band-pass that keeps the voice and drops most of the bed.
+    cropping it away or, when it sits inside the action, by blurring the detected strip.
+  * Speech is isolated from music with Demucs. Missing dependencies or failed
+    separation fail the operation instead of substituting unprocessed audio.
 
 Usage:
   clean_source.py --video IN.mp4 --output OUT.mp4 [--assets DIR]
@@ -83,8 +83,7 @@ def detect_caption_band(video: Path, duration: float) -> tuple[float, float] | N
         import cv2
         import numpy as np
     except Exception as exc:
-        log(f"OpenCV unavailable ({exc}); cannot inspect for burned-in captions")
-        return None
+        raise RuntimeError("Caption cleaning requires OpenCV and NumPy in the configured Python environment") from exc
 
     # Edge density per strip, per sample. Absolute thresholds were the first
     # attempt and they fail on busy footage: over a wall of chocolate wrappers
@@ -178,9 +177,8 @@ def isolate_voice(video: Path, work: Path) -> Path | None:
     -104 dB on a video that plainly had a bed, and concluded there was none.
     So separation always runs.
 
-    Demucs does a real source separation and keeps the voice intact. If it is
-    unavailable or fails, a speech band-pass still removes most of a bed,
-    which is worse but better than leaving it.
+    Demucs performs source separation. Failure must reach the job runner;
+    a band-pass filter does not satisfy a request to isolate speech.
     """
     work.mkdir(parents=True, exist_ok=True)
     raw = work / "source_audio.wav"
@@ -189,28 +187,15 @@ def isolate_voice(video: Path, work: Path) -> Path | None:
          "-vn", "-ac", "2", "-ar", "44100", str(raw)],
         check=True, capture_output=True)
 
-    try:
-        log("separating voice from the backing track (demucs)")
-        subprocess.run(
-            [sys.executable, "-m", "demucs", "--two-stems", "vocals",
-             "-n", "htdemucs", "-o", str(work), str(raw)],
-            check=True, capture_output=True, text=True, timeout=3600)
-        for cand in work.rglob("vocals.wav"):
-            log("voice isolated")
-            return cand
-        log("demucs produced no vocals track")
-    except subprocess.TimeoutExpired:
-        log("demucs timed out; falling back to a speech band-pass")
-    except Exception as exc:
-        log(f"demucs unavailable ({str(exc)[:80]}); falling back to a speech band-pass")
-
-    filtered = work / "voice_bandpass.wav"
+    log("separating voice from the backing track (demucs)")
     subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(raw),
-         "-af", "highpass=f=180,lowpass=f=6500,afftdn=nr=18:nf=-30,dynaudnorm=g=5",
-         str(filtered)],
-        check=True, capture_output=True)
-    return filtered
+        [sys.executable, "-m", "demucs", "--two-stems", "vocals",
+         "-n", "htdemucs", "-o", str(work), str(raw)],
+        check=True, capture_output=True, text=True, timeout=3600)
+    for cand in work.rglob("vocals.wav"):
+        log("voice isolated")
+        return cand
+    raise RuntimeError("Voice isolation produced no vocals track")
 
 
 def main() -> int:
@@ -287,45 +272,39 @@ def main() -> int:
     elif filters:
         cmd += ["-vf", filters]
 
-    voice = None
-    if strip_audio:
-        import tempfile
-        work = Path(tempfile.mkdtemp(prefix="voice_"))
-        try:
-            voice = isolate_voice(video, work)
-        except Exception as exc:
-            log(f"voice isolation failed ({exc}); keeping the original audio")
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="voice_", dir=output.parent) as work:
+        voice = isolate_voice(video, Path(work)) if strip_audio else None
+        if voice:
+            cmd += ["-i", str(voice)]
 
-    if voice:
-        cmd += ["-i", str(voice)]
+        # All inputs are now declared, so mapping is safe.
+        cmd += ["-map", video_map]
+        if voice:
+            # The isolated voice replaces the original track entirely, so nothing
+            # of the original bed survives into the edit.
+            cmd += ["-map", "1:a:0"]
+        else:
+            cmd += ["-map", "0:a?"]
 
-    # All inputs are now declared, so mapping is safe.
-    cmd += ["-map", video_map]
-    if voice:
-        # The isolated voice replaces the original track entirely, so nothing
-        # of the original bed survives into the edit.
-        cmd += ["-map", "1:a:0"]
-    else:
-        cmd += ["-map", "0:a?"]
+        # Subtitle tracks are simply never mapped, so soft subs cannot survive.
+        cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", str(output)]
 
-    # Subtitle tracks are simply never mapped, so soft subs cannot survive.
-    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "18",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-            "-movflags", "+faststart", str(output)]
-
-    done = subprocess.run(cmd, capture_output=True, text=True)
-    if done.returncode != 0:
-        # `check=True` raised a CalledProcessError whose message was the whole
-        # command line and nothing about what went wrong, because
-        # `capture_output` had already swallowed ffmpeg's explanation. Surface
-        # the explanation instead.
-        tail = (done.stderr or "").strip().splitlines()[-4:]
-        raise RuntimeError(
-            "ffmpeg failed to write the cleaned video: " + " | ".join(tail)
-        )
-    log(f"wrote {output.name}")
-    print(str(output))
-    return 0
+        done = subprocess.run(cmd, capture_output=True, text=True)
+        if done.returncode != 0:
+            # `check=True` raised a CalledProcessError whose message was the whole
+            # command line and nothing about what went wrong, because
+            # `capture_output` had already swallowed ffmpeg's explanation. Surface
+            # the explanation instead.
+            tail = (done.stderr or "").strip().splitlines()[-4:]
+            raise RuntimeError(
+                "ffmpeg failed to write the cleaned video: " + " | ".join(tail)
+            )
+        log(f"wrote {output.name}")
+        print(str(output))
+        return 0
 
 
 if __name__ == "__main__":

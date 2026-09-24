@@ -217,15 +217,22 @@ describe("youtube (port additions)", () => {
       "--print",
       "after_move:filepath",
       "--no-simulate",
+      "--progress",
+      "--newline",
+      "--socket-timeout",
+      "20",
       "--",
       "https://www.youtube.com/watch?v=X2oNmdGVBoc",
     ]);
+    expect(downloadArgv(id, "/tmp/dl", "500M").slice(-4)).toEqual(["--max-filesize", "500M", "--", "https://www.youtube.com/watch?v=X2oNmdGVBoc"]);
     expect(YTDLP_FORMAT).toBe("bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best");
   });
 
   it("reuseAllowed is the Creative Commons check", () => {
     expect(reuseAllowed("Creative Commons Attribution license (reuse allowed)")).toBe(true);
-    expect(reuseAllowed("creative commons")).toBe(true);
+    expect(reuseAllowed("creative commons")).toBe(false);
+    expect(reuseAllowed("CC BY 4.0")).toBe(true);
+    for (const license of ["Creative Commons NonCommercial", "CC BY-NC 4.0", "CC BY-ND 4.0", "reuse allowed for personal use"]) expect(reuseAllowed(license)).toBe(false);
     expect(reuseAllowed("Standard YouTube License")).toBe(false);
     expect(reuseAllowed(null)).toBe(false);
     expect(reuseAllowed(undefined)).toBe(false);

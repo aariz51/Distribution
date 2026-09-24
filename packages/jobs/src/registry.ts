@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Platform } from "@distribution/core";
 
 /** Queues group jobs by the resource they contend for. Concurrency and retry
  *  policy are per queue (Gate 3 cost controls). */
@@ -22,13 +23,21 @@ export const JOB_TYPES = {
     queue: "light",
     payload: z.object({ productId: z.uuid(), assetIds: z.array(z.uuid()).min(1) }),
   },
+  "source.search": {
+    queue: "light",
+    payload: z.object({ productId: z.uuid(), query: z.string().trim().min(3).max(240) }),
+  },
+  "source.discover": {
+    queue: "light",
+    payload: z.object({ productId: z.uuid(), channelUrl: z.url() }),
+  },
   "source.probe": {
     queue: "light",
-    payload: z.object({ productId: z.uuid(), sourceId: z.uuid() }),
+    payload: z.object({ productId: z.uuid(), sourceId: z.uuid(), qualificationBatch: z.uuid().optional() }),
   },
   "source.ingest": {
     queue: "media",
-    payload: z.object({ productId: z.uuid(), sourceId: z.uuid(), projectId: z.uuid().optional() }),
+    payload: z.object({ productId: z.uuid(), sourceId: z.uuid(), projectId: z.uuid().optional(), screenOnly: z.boolean().optional(), qualificationBatch: z.uuid().optional() }),
   },
   "source.transcribe": {
     queue: "media",
@@ -48,7 +57,7 @@ export const JOB_TYPES = {
   },
   "copy.generate": {
     queue: "llm",
-    payload: z.object({ productId: z.uuid(), assetId: z.uuid(), platforms: z.array(z.string()).min(1) }),
+    payload: z.object({ productId: z.uuid(), assetId: z.uuid(), platforms: z.array(Platform).min(1).max(10) }),
   },
   "publish.post": {
     queue: "publish",
@@ -64,11 +73,11 @@ export const JOB_TYPES = {
   },
   "promo.run": {
     queue: "llm",
-    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), referenceUrl: z.string().optional(), referenceId: z.uuid().optional(), durationSec: z.number().min(15).max(90).default(33) }),
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), referenceUrl: z.string().optional(), referenceId: z.uuid().optional(), referenceAssetId: z.uuid().optional(), durationSec: z.number().min(15).max(90).default(33) }),
   },
   "promo.analyze_reference": {
     queue: "llm",
-    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), referenceUrl: z.string().optional(), referenceId: z.uuid().optional() }),
+    payload: z.object({ productId: z.uuid(), projectId: z.uuid(), referenceUrl: z.string().optional(), referenceId: z.uuid().optional(), referenceAssetId: z.uuid().optional() }),
   },
   "promo.storyboard": {
     queue: "llm",
@@ -103,4 +112,12 @@ export function parsePayload<T extends JobTypeName>(type: T, payload: unknown): 
 export interface JobEnvelope {
   jobId: string;
   type: JobTypeName;
+}
+
+/** Full-frame screening of a three-hour source may take hours on CPU workers. */
+export const SOURCE_SCREENING_TIMEOUT_SECONDS = 12 * 60 * 60;
+export function executionSecondsFor(type: JobTypeName): number {
+  return ["source.ingest", "source.transcribe", "shorts.cut", "shorts.enrich", "publish.post"].includes(type)
+    ? SOURCE_SCREENING_TIMEOUT_SECONDS + 2 * 60 * 60
+    : QUEUE_POLICY[queueFor(type)].expireInSeconds;
 }

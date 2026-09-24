@@ -1,3 +1,5 @@
+import { BudgetExceededError } from "@distribution/core";
+import type { ChatRequest } from "./types";
 /** USD per 1M tokens (input, output). Estimates for cost tracking only; update
  *  when providers change prices. Unknown models cost 0 and are flagged. */
 const PRICES: Record<string, [number, number]> = {
@@ -16,7 +18,7 @@ const PRICES: Record<string, [number, number]> = {
 };
 
 export function estimateChatUsd(model: string, inputTokens: number, outputTokens: number): { usd: number; known: boolean } {
-  const key = Object.keys(PRICES).find((k) => model === k || model.startsWith(k) || model.includes(k));
+  const key = Object.keys(PRICES).sort((a, b) => b.length - a.length).find((k) => model === k || model.startsWith(k) || model.includes(k));
   if (!key) return { usd: 0, known: false };
   const [i, o] = PRICES[key]!;
   return { usd: (inputTokens * i + outputTokens * o) / 1_000_000, known: true };
@@ -29,3 +31,14 @@ export const STT_PRICE_PER_MIN: Record<string, number> = {
   "openai:whisper-1": 0.006,
   "whisper-local:base": 0,
 };
+
+/** Conservative pre-call estimate including every transport retry. This is not an invoice guarantee. */
+export function reserveChatUsd(model: string, req: ChatRequest, maxTokens: number, attempts: number, local = false): number {
+  if (local) return 0;
+  const inputTokens = Buffer.byteLength(req.system ?? "") + req.messages.reduce((total, message) => total + 32 + (typeof message.content === "string"
+    ? Buffer.byteLength(message.content)
+    : message.content.reduce((n, part) => n + (part.type === "text" ? Buffer.byteLength(part.text) : 65536), 0)), 0);
+  const estimate = estimateChatUsd(model, inputTokens, maxTokens);
+  if (!estimate.known) throw new BudgetExceededError(`No pricing configured for ${model}; add its rate before making paid calls`);
+  return estimate.usd * attempts;
+}

@@ -1,4 +1,5 @@
 import "./env.js";
+import { enqueueConnectedSourceChecks } from "./connected-source-poller";
 import os from "node:os";
 import { logger } from "@distribution/core";
 import { getDb, closeDb, workerHeartbeats, sql } from "@distribution/db";
@@ -23,6 +24,8 @@ async function main() {
       .insert(workerHeartbeats)
       .values({ workerId, hostname: os.hostname(), queues })
       .onConflictDoUpdate({ target: workerHeartbeats.workerId, set: { lastSeenAt: sql`now()`, queues } });
+    await queue.reclaimStaleJobs();
+    if (queues.includes("light")) await enqueueConnectedSourceChecks(db, queue);
   };
   await beat();
   const timer = setInterval(() => beat().catch((err) => logger.warn({ err }, "heartbeat failed")), 30_000);
@@ -42,6 +45,20 @@ async function main() {
       process.exit(0);
     }
   };
+  // A single unhandled rejection used to end the process and every render in
+  // it. Log it and keep serving: pg-boss will retry or expire the affected job,
+  // and the other jobs in flight are unrelated to whatever threw.
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ err: String(reason instanceof Error ? reason.stack ?? reason.message : reason) }, "unhandled rejection; worker staying up");
+  });
+  // An uncaught exception may have corrupted state, so this one does stop the
+  // worker — but gracefully, so in-flight jobs are released back to the queue
+  // for another worker rather than being left marked as running.
+  process.on("uncaughtException", (err) => {
+    logger.error({ err: err.stack ?? err.message }, "uncaught exception; shutting down gracefully");
+    void shutdown("uncaughtException");
+  });
+
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }

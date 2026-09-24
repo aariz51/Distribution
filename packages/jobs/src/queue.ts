@@ -1,7 +1,10 @@
-import { PgBoss, type Job, type JobWithMetadata } from "pg-boss";
-import { and, databaseUrl, eq, jobs, sql, usageLedger, type Db } from "@distribution/db";
+import { withProviderBudget } from "@distribution/core/provider-budget";
+import { reconcileJobProject } from "./project-state";
+import { fromDrizzle, PgBoss, type Job, type JobWithMetadata } from "pg-boss";
+import { productBudget, and, databaseUrl, eq, jobs, sql, usageLedger, type Db } from "@distribution/db";
 import { isRetrySafe, logger, newId, PipelineError, redact, type Logger } from "@distribution/core";
 import {
+  executionSecondsFor,
   DEAD_LETTER_QUEUE,
   JOB_TYPES,
   QUEUE_POLICY,
@@ -86,7 +89,46 @@ export class JobQueue {
         retentionSeconds: 14 * 24 * 3600,
       });
     }
-    return new JobQueue(boss, db);
+    const queue = new JobQueue(boss, db);
+    await queue.reclaimStaleJobs();
+    return queue;
+  }
+
+  /** Reconcile interrupted app rows with pg-boss, which owns execution leases.
+   * Starting another web client or worker never revokes an active lease.
+   * pg-boss schedules retries itself; resending an existing job ID is not recovery.
+   */
+  async reclaimStaleJobs(): Promise<{ requeued: number; failed: number }> {
+    const rows = await this.db.select({ row: jobs, revision: sql<string>`${jobs.updatedAt}::text` }).from(jobs)
+      .where(sql`${jobs.status} in ('started','progress','retrying')`);
+    let requeued = 0;
+    let failed = 0;
+    for (const { row, revision } of rows) {
+      const type = row.type as JobTypeName;
+      if (!JOB_TYPES[type]) continue;
+      const transport = await this.boss.getJobById(queueFor(type), row.pgbossId ?? row.id);
+      if (transport?.state === "active") continue;
+      const pending = transport?.state === "created" || transport?.state === "retry";
+      const status = pending ? (transport.state === "retry" ? "retrying" : "queued")
+        : transport?.state === "cancelled" ? "cancelled" : "failed";
+      if (row.status === status) continue;
+      const message = pending ? "pg-boss scheduled this job for another attempt"
+        : `processing ended without a recorded result (queue state: ${transport?.state ?? "missing"})`;
+      const changed = await this.db.update(jobs).set({
+        status,
+        ...(pending ? { currentStep: "retry", completedAt: null } : {
+          error: { message, name: "InterruptedError", retrySafe: false },
+          completedAt: sql`now()`,
+        }),
+        updatedAt: sql`now()`,
+      }).where(and(eq(jobs.id, row.id), eq(jobs.status, row.status), sql`${jobs.updatedAt} = ${revision}::timestamptz`))
+        .returning({ id: jobs.id });
+      if (!changed.length) continue; // The worker advanced after our snapshot.
+      await createProgressWriter(this.db, row.id).event("warn", message, undefined, "recover");
+      await reconcileJobProject(this.db, row.id);
+      if (pending) requeued++; else failed++;
+    }
+    return { requeued, failed };
   }
 
   async stop(): Promise<void> {
@@ -95,58 +137,103 @@ export class JobQueue {
 
   /** Insert the app job row and hand pg-boss an envelope with the same id. */
   async enqueue<T extends JobTypeName>(type: T, payload: JobPayload<T>, opts: EnqueueOptions = {}): Promise<{ jobId: string; deduplicated: boolean }> {
+    return this.enqueueOn(this.db, type, payload, opts);
+  }
+
+  /** Commit a domain mutation and its queue message in the caller's transaction. */
+  async enqueueInTransaction<T extends JobTypeName>(tx: Parameters<Parameters<Db["transaction"]>[0]>[0], type: T, payload: JobPayload<T>, opts: EnqueueOptions = {}): Promise<{ jobId: string; deduplicated: boolean }> {
+    return this.enqueueOn(tx, type, payload, opts);
+  }
+
+  private async enqueueOn<T extends JobTypeName>(database: Pick<Db, "transaction">, type: T, payload: JobPayload<T>, opts: EnqueueOptions): Promise<{ jobId: string; deduplicated: boolean }> {
     const parsed = parsePayload(type, payload);
     const queue = queueFor(type);
     const policy = QUEUE_POLICY[queue];
     const jobId = newId();
     const maxAttempts = opts.maxAttempts ?? policy.retryLimit + 1;
 
-    if (opts.singletonKey) {
-      const existing = await this.db
-        .select({ id: jobs.id })
-        .from(jobs)
-        .where(and(eq(jobs.singletonKey, opts.singletonKey), sql`${jobs.status} in ('queued','started','progress','retrying')`))
-        .limit(1);
-      if (existing[0]) return { jobId: existing[0].id, deduplicated: true };
-    }
+    return database.transaction(async tx => {
+      if (opts.singletonKey) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`enqueue:${opts.singletonKey}`}, 0))`);
+        const existing = await tx
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(and(eq(jobs.singletonKey, opts.singletonKey), sql`${jobs.status} in ('queued','started','progress','retrying')`))
+          .limit(1);
+        if (existing[0]) return { jobId: existing[0].id, deduplicated: true };
+      }
 
-    await this.db.insert(jobs).values({
-      id: jobId,
-      type,
-      productId: opts.productId ?? null,
-      projectId: opts.projectId ?? null,
-      assetId: opts.assetId ?? null,
-      sourceId: opts.sourceId ?? null,
-      status: "queued",
-      priority: opts.priority ?? 0,
-      maxAttempts,
-      payload: parsed as Record<string, unknown>,
-      singletonKey: opts.singletonKey ?? null,
-    });
+      await tx.insert(jobs).values({
+        id: jobId,
+        type,
+        productId: opts.productId ?? null,
+        projectId: opts.projectId ?? null,
+        assetId: opts.assetId ?? null,
+        sourceId: opts.sourceId ?? null,
+        status: "queued",
+        priority: opts.priority ?? 0,
+        maxAttempts,
+        payload: parsed as Record<string, unknown>,
+        singletonKey: opts.singletonKey ?? null,
+      });
 
-    const envelope: JobEnvelope = { jobId, type };
-    const bossId = await this.boss.send(queue, envelope, {
-      id: jobId,
-      priority: opts.priority ?? 0,
-      singletonKey: opts.singletonKey,
-      startAfter: opts.startAfter,
-      retryLimit: maxAttempts - 1,
+      const envelope: JobEnvelope = { jobId, type };
+      const bossId = await this.boss.send(queue, envelope, {
+        db: fromDrizzle(tx, sql),
+        id: jobId,
+        priority: opts.priority ?? 0,
+        singletonKey: opts.singletonKey,
+        startAfter: opts.startAfter,
+        retryLimit: maxAttempts - 1,
+        expireInSeconds: executionSecondsFor(type),
+      });
+      if (!bossId) {
+        throw new PipelineError("queue refused job submission; no job was created", { retrySafe: true, step: "enqueue" });
+      }
+      await tx.update(jobs).set({ pgbossId: bossId }).where(eq(jobs.id, jobId));
+      return { jobId, deduplicated: false };
     });
-    if (!bossId) {
-      // pg-boss refused (singleton collision at its layer). Mark ours cancelled.
-      await this.db.update(jobs).set({ status: "cancelled", error: { message: "duplicate singleton" } }).where(eq(jobs.id, jobId));
-      return { jobId, deduplicated: true };
-    }
-    await this.db.update(jobs).set({ pgbossId: bossId }).where(eq(jobs.id, jobId));
-    return { jobId, deduplicated: false };
+  }
+
+  async retry(jobId: string): Promise<{ jobId: string; deduplicated: boolean }> {
+    return this.db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`retry:${jobId}`}, 0))`);
+      const row = (await tx.select().from(jobs).where(eq(jobs.id, jobId)))[0];
+      if (!row || row.status !== "failed") throw new PipelineError("Only failed jobs can be retried", { step: "retry" });
+      if (typeof row.result?.retryJobId === "string") return { jobId: row.result.retryJobId, deduplicated: true };
+      const type = row.type as JobTypeName;
+      if (!JOB_TYPES[type]) throw new PipelineError("This job type is no longer supported", { step: "retry" });
+      const retried = await this.enqueueOn(tx, type, parsePayload(type, row.payload), {
+        ...(row.productId ? { productId: row.productId } : {}),
+        ...(row.projectId ? { projectId: row.projectId } : {}),
+        ...(row.assetId ? { assetId: row.assetId } : {}),
+        ...(row.sourceId ? { sourceId: row.sourceId } : {}),
+        priority: row.priority, maxAttempts: row.maxAttempts, singletonKey: `retry:${jobId}`,
+      });
+      await tx.update(jobs).set({ result: { ...row.result, retryJobId: retried.jobId }, updatedAt: sql`now()` }).where(eq(jobs.id, jobId));
+      await reconcileJobProject(tx, jobId);
+      return retried;
+    });
   }
 
   async cancel(jobId: string): Promise<void> {
-    const row = await this.db.select({ type: jobs.type }).from(jobs).where(eq(jobs.id, jobId)).limit(1);
-    const type = row[0]?.type as JobTypeName | undefined;
-    if (!type) return;
-    await this.boss.cancel(queueFor(type), jobId);
-    await this.db.update(jobs).set({ status: "cancelled", completedAt: sql`now()` }).where(eq(jobs.id, jobId));
+    const changed = await this.db.transaction(async tx => {
+      const row = (await tx.select().from(jobs).where(eq(jobs.id, jobId)).for("update"))[0];
+      if (!row || ["completed", "failed", "cancelled"].includes(row.status)) return [];
+      const root = await tx.update(jobs).set({ status: "cancelled", completedAt: sql`now()`, updatedAt: sql`now()` }).where(eq(jobs.id, jobId)).returning({ id: jobs.id, type: jobs.type });
+      // Qualification parents and descendant admission lock the same parent row.
+      // Children committed first are cancelled here; later admission sees cancelled.
+      const batch = row.type === "source.search" ? row.id : row.type === "source.probe" ? row.payload.qualificationBatch : null;
+      if (typeof batch !== "string") return root;
+      const descendants = await tx.update(jobs).set({ status: "cancelled", completedAt: sql`now()`, updatedAt: sql`now()` })
+        .where(and(sql`${jobs.payload}->>'qualificationBatch' = ${batch}`, sql`${jobs.status} in ('queued','started','progress','retrying')`, row.type === "source.probe" ? eq(jobs.sourceId, row.sourceId!) : sql`true`))
+        .returning({ id: jobs.id, type: jobs.type });
+      return [...root, ...descendants];
+    });
+    for (const row of changed) {
+      await this.boss.cancel(queueFor(row.type as JobTypeName), row.id);
+      await reconcileJobProject(this.db, row.id);
+    }
   }
 
   register<T extends JobTypeName>(type: T, handler: JobHandler<T>): void {
@@ -188,60 +275,85 @@ export class JobQueue {
       await this.finishFailed(jobId, new PipelineError(`no handler registered for ${type}`), attempt, false);
       return;
     }
-    await this.db
+    const claimed = await this.db
       .update(jobs)
       .set({ status: "started", attempts: attempt, startedAt: row.startedAt ?? sql`now()`, currentStep: "start", updatedAt: sql`now()` })
-      .where(eq(jobs.id, jobId));
+      .where(and(eq(jobs.id, jobId), sql`${jobs.status} not in ('completed','cancelled')`)).returning({ id: jobs.id });
+    if (!claimed.length) return;
     const writer = createProgressWriter(this.db, jobId);
     await writer.event("info", attempt > 1 ? `retry ${attempt}/${row.maxAttempts}` : "started", undefined, "start");
 
-    const ctx: JobContext<JobTypeName> = {
-      jobId,
-      type,
-      payload: parsePayload(type, row.payload),
-      attempt,
-      maxAttempts: row.maxAttempts,
-      db: this.db,
-      log,
-      signal: job.signal,
-      queue: this,
-      ...writer,
-      recordUsage: async (u) => {
-        await this.db.insert(usageLedger).values({
-          accountId: u.accountId,
-          productId: u.productId ?? row.productId,
-          jobId,
-          provider: u.provider,
-          model: u.model ?? null,
-          kind: u.kind,
-          purpose: u.purpose ?? null,
-          inputTokens: u.inputTokens ?? null,
-          outputTokens: u.outputTokens ?? null,
-          seconds: u.seconds ?? null,
-          bytes: u.bytes ?? null,
-          usdEstimate: u.usdEstimate ?? 0,
-        });
-        await this.db
-          .update(jobs)
-          .set({ cost: sql`jsonb_set(coalesce(${jobs.cost}, '{}'::jsonb), '{usd_estimate}', to_jsonb(coalesce((${jobs.cost}->>'usd_estimate')::float8, 0) + ${u.usdEstimate ?? 0}))` })
-          .where(eq(jobs.id, jobId));
-      },
-    };
+    const cancellation = new AbortController();
+    const signal = AbortSignal.any([job.signal, cancellation.signal]);
+    let checking = false;
+    const cancellationPoll = setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void this.db.select({ status: jobs.status }).from(jobs).where(eq(jobs.id, jobId)).then(rows => {
+        if (!rows[0] || rows[0].status === "cancelled") cancellation.abort(new Error("Job cancelled"));
+      }).catch(err => log.warn({ err: redact(String(err)) }, "cancellation check failed"))
+        .finally(() => { checking = false; });
+    }, 500);
+    cancellationPoll.unref();
 
     const started = Date.now();
     try {
-      const result = await handler(ctx);
-      await this.db
+      const payload = parsePayload(type, row.payload);
+      const payloadProductId = "productId" in payload ? payload.productId : undefined;
+      if (row.productId && payloadProductId && row.productId !== payloadProductId) throw new PipelineError("Job product does not match payload", { retrySafe: false });
+      const budgetProductId = row.productId ?? payloadProductId;
+      const ctx: JobContext<JobTypeName> = {
+        jobId,
+        type,
+        payload,
+        attempt,
+        maxAttempts: row.maxAttempts,
+        db: this.db,
+        log,
+        signal,
+        queue: this,
+        ...writer,
+        recordUsage: async (u) => {
+          await this.db.insert(usageLedger).values({
+            accountId: u.accountId,
+            productId: u.productId ?? budgetProductId,
+            jobId,
+            provider: u.provider,
+            model: u.model ?? null,
+            kind: u.kind,
+            purpose: u.purpose ?? null,
+            inputTokens: u.inputTokens ?? null,
+            outputTokens: u.outputTokens ?? null,
+            seconds: u.seconds ?? null,
+            bytes: u.bytes ?? null,
+            usdEstimate: u.usdEstimate ?? 0,
+          });
+          await this.db
+            .update(jobs)
+            .set({ cost: sql`jsonb_set(coalesce(${jobs.cost}, '{}'::jsonb), '{usd_estimate}', to_jsonb(coalesce((${jobs.cost}->>'usd_estimate')::float8, 0) + ${u.usdEstimate ?? 0}))` })
+            .where(eq(jobs.id, jobId));
+        },
+      };
+
+      const result = budgetProductId
+        ? await withProviderBudget(productBudget(this.db, budgetProductId, jobId), () => handler(ctx))
+        : await handler(ctx);
+      const completed = await this.db
         .update(jobs)
-        .set({ status: "completed", progressPct: 100, currentStep: "done", result: (result as Record<string, unknown>) ?? null, completedAt: sql`now()`, updatedAt: sql`now()` })
-        .where(eq(jobs.id, jobId));
-      await writer.event("info", `completed in ${Math.round((Date.now() - started) / 1000)}s`, undefined, "done");
+        .set({ status: "completed", progressPct: 100, currentStep: "done", error: null, result: (result as Record<string, unknown>) ?? null, completedAt: sql`now()`, updatedAt: sql`now()` })
+        .where(and(eq(jobs.id, jobId), sql`${jobs.status} in ('started','progress')`)).returning({ id: jobs.id });
+      await reconcileJobProject(this.db, jobId);
+      if (completed.length) await writer.event("info", `completed in ${Math.round((Date.now() - started) / 1000)}s`, undefined, "done");
     } catch (err) {
+      const current = (await this.db.select({ status: jobs.status }).from(jobs).where(eq(jobs.id, jobId)))[0];
+      if (!current || current.status === "cancelled") return;
       const retrySafe = isRetrySafe(err);
       const willRetry = retrySafe && attempt < row.maxAttempts;
       await this.finishFailed(jobId, err, attempt, willRetry);
       if (willRetry) throw err; // let pg-boss schedule the retry
       // not retry-safe (or out of attempts): swallow so pg-boss completes; our row is failed.
+    } finally {
+      clearInterval(cancellationPoll);
     }
   }
 
@@ -265,7 +377,8 @@ export class JobQueue {
         completedAt: willRetry ? null : sql`now()`,
         updatedAt: sql`now()`,
       })
-      .where(eq(jobs.id, jobId));
+      .where(and(eq(jobs.id, jobId), sql`${jobs.status} not in ('cancelled','completed')`));
+    if (!willRetry) await reconcileJobProject(this.db, jobId);
     const writer = createProgressWriter(this.db, jobId);
     await writer.event("error", willRetry ? `failed, will retry: ${e.message}` : `failed: ${e.message}`, { step: pe?.step, retrySafe: pe?.retrySafe, details: pe?.details }, pe?.step);
   }

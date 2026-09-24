@@ -82,6 +82,7 @@ Editorial rules you must follow:
   reaches the edit, so a query about people simply wastes the slot. Say
   "grocery shelves" rather than "shopper in aisle", "hands chopping vegetables"
   rather than "chef cooking".
+- Resolve words using the full clip topic, not an isolated word. For example, saline in food processing means food or salt water, not hospital IV bags. Never introduce unrelated medical imagery.
 - Never repeat the same broll query in adjacent slots.
 
 Schema, one entry per slot, exactly {len(lines)} entries:
@@ -398,137 +399,79 @@ def _person_present(net, frame, threshold: float = PERSON_CONFIDENCE) -> bool:
         _person_regions(net, frame, threshold))
 
 
+_strict_screens = {}
+
+
+def _strict_screen(assets: Path):
+    # Share the final gate's implementation and integrity-checked models.
+    from importlib.util import spec_from_file_location, module_from_spec
+    key = str(assets.resolve())
+    if key not in _strict_screens:
+        path = Path(__file__).resolve().parents[2] / "screening" / "visual_screen.py"
+        spec = spec_from_file_location("broll_visual_screen", path)
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _strict_screens[key] = module.VisualScreen(
+            _cache_dir(), assets / "face_detection_yunet_2023mar.onnx")
+    return _strict_screens[key]
+
+
 def clip_is_allowed(video: Path, assets: Path, start: float = 0.0,
-                    window: float | None = None) -> tuple[bool, str]:
-    """Screen one downloaded clip. Returns (allowed, reason).
+                    window: float | None = None, crop_y: float = .5) -> tuple[bool, str]:
+    """Check every decoded used frame, both original and actual portrait grade.
 
-    Two stages, both fail-closed:
-
-    1. Is anybody in shot? If not, the clip is fine.
-    2. If somebody is, every person must be verifiable as male. A face that
-       reads female, a face the classifier is unsure about, or a person whose
-       face cannot be seen at all all reject the clip.
-
-    Any error -- missing model, unreadable frame, detection failure -- also
-    rejects. Losing a usable clip costs nothing but a speaker hold; letting one
-    through cannot be undone once posted.
+    Decode to bounded temporary files before inference so decoder errors and
+    timeouts cannot look like a successful short stream. Final output screening
+    remains mandatory after captions and other compositing.
     """
+    import tempfile
+    import math
     policy = (os.environ.get("BROLL_PEOPLE_POLICY") or "no-women").strip().lower()
-    if policy == "off":
-        return True, "screening off"
-
+    if policy not in ("no-women", "no-people"):
+        return False, "unsupported screening policy"
     try:
         import cv2
-        import numpy as np
-    except Exception as exc:
-        return False, f"screening unavailable ({exc})"
-
-    weights = assets / "face_detection_yunet_2023mar.onnx"
-    if not weights.exists():
-        return False, "face detector missing"
-
-    try:
-        detector = cv2.FaceDetectorYN.create(str(weights), "", (320, 320), 0.7)
-        person_net = _cached_model(PERSON_MODEL_URL, "object_detection_yolox_2022nov.onnx")
-        gender_net = (None if policy == "no-people"
-                      else _cached_model(GENDER_MODEL_URL, "gender_googlenet.onnx"))
-    except Exception as exc:
-        return False, f"models unavailable ({exc})"
-
-    try:
+        screen = _strict_screen(assets)
         duration = float(subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(video)],
-            check=True, text=True, capture_output=True).stdout.strip())
+             "-of", "csv=p=0", str(video)], check=True, text=True,
+            capture_output=True, timeout=30).stdout.strip())
+        span = window if window is not None else duration - start
+        if not all(math.isfinite(x) for x in (duration, start, span)) or start < 0 or span <= 0 or span > 60 or start + span > duration + .05:
+            return False, "invalid screening interval"
+        counts = []
+        if not math.isfinite(crop_y) or not 0 <= crop_y <= 1:
+            return False, "invalid portrait crop"
+        portrait = f"scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920:(iw-ow)*0.5000:(ih-oh)*{crop_y:.4f},setsar=1"
+        with tempfile.TemporaryDirectory(prefix="broll-screen-") as tmp:
+            for name, grade in (("original", None), ("portrait", portrait)):
+                folder = Path(tmp) / name
+                folder.mkdir()
+                cmd = ["ffmpeg", "-v", "error", "-xerror", "-ss", str(start),
+                       "-i", str(video), "-t", str(span), "-an"]
+                if grade:
+                    cmd += ["-vf", grade]
+                cmd += ["-fps_mode", "passthrough", str(folder / "%08d.png")]
+                subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+                frames = sorted(folder.glob("*.png"))
+                if not frames:
+                    return False, "screening decoded no frames"
+                counts.append(len(frames))
+                for path in frames:
+                    frame = cv2.imread(str(path))
+                    if frame is None:
+                        return False, "screening frame could not be decoded"
+                    status, reason = screen.judge_frame(frame)
+                    if status != "allowed":
+                        return False, f"{name}: {reason}"
+                    if policy == "no-people" and screen.people(frame):
+                        return False, f"{name}: contains a person"
+                    path.unlink()
+        if counts[0] != counts[1]:
+            return False, "screening frame counts differ"
+        return True, f"all {counts[0]} original and portrait frames passed"
     except Exception as exc:
-        return False, f"unreadable clip ({exc})"
-
-    # Sample the stretch that will actually appear in the edit. Spreading the
-    # samples over a 20 second asset when only ~1 second of it is used means a
-    # person visible in the used moment can sit entirely between two samples --
-    # which is exactly how a woman at a warehouse desk reached a finished clip.
-    if window and window > 0:
-        span_start = max(0.0, min(start, max(0.0, duration - window)))
-        span = min(window, max(0.0, duration - span_start))
-    else:
-        span_start, span = 0.0, duration
-    if span <= 0:
-        span_start, span = 0.0, duration
-
-    people_frames = 0
-    verified_male = 0
-    for i in range(SCREEN_FRAMES):
-        t = span_start + span * (i + 0.5) / SCREEN_FRAMES
-        raw = subprocess.run(
-            ["ffmpeg", "-v", "error", "-ss", f"{t:.2f}", "-i", str(video),
-             "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
-            capture_output=True).stdout
-        if not raw:
-            continue
-        frame = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
-        if frame is None:
-            continue
-
-        try:
-            regions = _person_regions(person_net, frame)
-        except Exception as exc:
-            return False, f"person detection failed ({exc})"
-        if not regions:
-            continue
-
-        people_frames += 1
-        if policy == "no-people":
-            return False, "contains a person"
-
-        # Every region holding a person must be verifiable. Checking only the
-        # faces the detector happens to find on the whole frame is what let a
-        # crowd through: one readable male face "cleared" a room full of people.
-        for (_rx, _ry, region) in regions:
-            rh, rw = region.shape[:2]
-            # Zoom small regions so a distant face is judged at usable detail.
-            if rh < 480:
-                factor = min(4.0, 480 / max(1, rh))
-                region = cv2.resize(region, (int(rw * factor), int(rh * factor)))
-                rh, rw = region.shape[:2]
-
-            detector.setInputSize((rw, rh))
-            try:
-                _, faces = detector.detect(region)
-            except Exception:
-                return False, "face detection failed"
-            if faces is None or not len(faces):
-                # Somebody is in shot but their face cannot be read, so they
-                # cannot be verified.
-                return False, "person present but face not visible"
-
-            for face in faces:
-                x, y, fw, fh = (int(v) for v in face[:4])
-                pad_f = int(max(fw, fh) * 0.25)
-                crop = region[max(0, y - pad_f):y + fh + pad_f,
-                              max(0, x - pad_f):x + fw + pad_f]
-                if crop.size == 0:
-                    return False, "face too close to frame edge to judge"
-                blob = cv2.dnn.blobFromImage(crop, 1.0, (224, 224), (104, 117, 123),
-                                             swapRB=False)
-                gender_net.setInput(blob)
-                raw = gender_net.forward().flatten()
-                # This network's final layer is already a softmax: a confident
-                # man comes back as [1.0, 0.0]. Re-softmaxing it squashed that
-                # to [0.73, 0.27] and a woman to [0.38, 0.62], collapsing the
-                # confidence scale so no face could ever read as clearly male
-                # and every clip containing a person was rejected. Only
-                # normalise when the output is not already a distribution.
-                if raw.min() < 0.0 or abs(float(raw.sum()) - 1.0) > 0.01:
-                    exp = np.exp(raw - raw.max())
-                    raw = exp / exp.sum()
-                male = float(raw[0])
-                if male < MALE_CONFIDENCE:
-                    return False, f"face not confidently male (male={male:.2f})"
-                verified_male += 1
-
-    if people_frames:
-        return True, f"people in {people_frames} frame(s), {verified_male} face(s) all male"
-    return True, "no people"
+        return False, f"screening unavailable ({exc})"
 
 
 # --------------------------------------------------------------------------
@@ -625,7 +568,7 @@ def wikimedia_download(query: str, dest_dir: Path, index: int,
         # Commons footage was previously used unscreened -- the people policy
         # only ever applied to Pexels. Same rules apply here.
         if assets is not None:
-            allowed, reason = clip_is_allowed(target, assets, offset, need_seconds)
+            allowed, reason = clip_is_allowed(target, assets, offset, need_seconds, .4 + .1 * (index % 3))
             if not allowed:
                 log(f"rejected commons {query!r}: {reason}")
                 target.unlink(missing_ok=True)
@@ -712,7 +655,7 @@ def pexels_download(query: str, dest_dir: Path, index: int,
             continue
 
         if assets is not None:
-            allowed, reason = clip_is_allowed(target, assets, 0.0, need_seconds)
+            allowed, reason = clip_is_allowed(target, assets, 0.0, need_seconds, .4 + .1 * (index % 3))
             if not allowed:
                 log(f"rejected {query!r}: {reason}")
                 target.unlink(missing_ok=True)
@@ -971,6 +914,10 @@ def main() -> int:
     ap.add_argument("--assets", default=str(Path(__file__).parent),
                     help="directory holding the detection models used to screen "
                          "footage for people")
+    ap.add_argument("--prepare-only", action="store_true")
+    ap.add_argument("--render-existing", action="store_true", help="Re-render an existing screened scene plan without new sourcing")
+    ap.add_argument("--external-text", action="store_true", help="Application restores exact captions instead of color-key extraction")
+    ap.add_argument("--planning-reply", help="Provider reply from the budgeted application planner")
     args = ap.parse_args()
 
     clip = Path(args.clip).expanduser().resolve()
@@ -989,9 +936,10 @@ def main() -> int:
 
     # 1. Inventory + draft plan (also detects the burned-in caption band).
     log("preparing project")
-    run([args.python, str(scripts / "prepare_project.py"), str(clip),
-         "--edit-dir", str(edit)],
-        cwd=scripts, stdout=subprocess.DEVNULL)
+    if not args.planning_reply and not args.render_existing:
+        run([args.python, str(scripts / "prepare_project.py"), str(clip),
+             "--edit-dir", str(edit)],
+            cwd=scripts, stdout=subprocess.DEVNULL)
 
     plan_path = edit / "scene_plan.json"
     plan = json.loads(plan_path.read_text())
@@ -1001,26 +949,35 @@ def main() -> int:
         words = json.loads(Path(args.transcript).read_text()).get("words", [])
     lines = scene_transcripts(plan["scenes"], words)
 
-    # 2. Decide what each slot shows.
-    if any(lines):
-        log(f"planning {len(lines)} slots via LLM")
-        reply = call_llm(plan_prompt(lines, args.topic))
-        slots = extract_json(reply).get("slots", [])
-    else:
-        log("no transcript words; keeping the speaker throughout")
-        slots = []
+    if args.prepare_only:
+        print(json.dumps({"prompt": plan_prompt(lines, args.topic) if any(lines) else None}))
+        return 0
 
-    # Name this run's assets after the clip so a batch render and a click in
-    # the app cannot overwrite or delete each other's downloads.
-    global ASSET_PREFIX
-    ASSET_PREFIX = f"broll_{clip.stem}"
+    if not args.render_existing:
+        # 2. Decide what each slot shows.
+        if any(lines):
+            log(f"planning {len(lines)} slots via LLM")
+            reply = Path(args.planning_reply).read_text() if args.planning_reply else call_llm(plan_prompt(lines, args.topic))
+            slots = extract_json(reply).get("slots", [])
+        else:
+            log("no transcript words; keeping the speaker throughout")
+            slots = []
 
-    downloads = edit / "downloads"
-    downloads.mkdir(parents=True, exist_ok=True)
-    if not (os.environ.get("PEXELS_API_KEY") or "").strip():
-        log("PEXELS_API_KEY unset: sourcing from Wikimedia Commons only")
+        # Name this run's assets after the clip so a batch render and a click in
+        # the app cannot overwrite or delete each other's downloads.
+        global ASSET_PREFIX
+        ASSET_PREFIX = f"broll_{clip.stem}"
 
-    plan = apply_slots(plan, slots, downloads, Path(args.assets))
+        downloads = edit / "downloads"
+        downloads.mkdir(parents=True, exist_ok=True)
+        if not (os.environ.get("PEXELS_API_KEY") or "").strip():
+            log("PEXELS_API_KEY unset: sourcing from Wikimedia Commons only")
+
+        plan = apply_slots(plan, slots, downloads, Path(args.assets))
+    if not any(scene.get("kind") == "video" for scene in plan["scenes"]):
+        raise SystemExit("No usable stock footage found for the requested B-roll")
+    if args.external_text:
+        plan["caption"] = {"preserve": False}
     plan_path.write_text(json.dumps(plan, indent=2) + "\n")
 
     # 3. Render through the pinned video-use pipeline.
@@ -1046,6 +1003,14 @@ def main() -> int:
     elif expected and actual:
         log(f"frame count {actual}/{expected} from the skill renderer")
 
+    # A repair attempt is not evidence that the repair succeeded.
+    actual = frame_count(final)
+    if expected is None or actual is None or actual != expected:
+        raise SystemExit(f"B-roll frame count mismatch: {actual}/{expected}")
+    dimensions = probe(final, "stream=width,height")
+    if dimensions != "1080,1920":
+        raise SystemExit(f"Invalid B-roll dimensions: {dimensions}")
+
     # 4. Verify the rendered file, not the intermediates.
     if args.verify:
         log("verifying")
@@ -1053,7 +1018,7 @@ def main() -> int:
             run([args.python, str(scripts / "verify_output.py"), str(plan_path)],
                 cwd=scripts, stdout=subprocess.DEVNULL)
         except subprocess.CalledProcessError as exc:
-            log(f"verification reported problems (exit {exc.returncode})")
+            raise SystemExit(f"verification reported problems (exit {exc.returncode})") from exc
 
     if args.output:
         out = Path(args.output).expanduser().resolve()

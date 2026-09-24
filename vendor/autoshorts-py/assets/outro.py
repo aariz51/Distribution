@@ -12,15 +12,13 @@ Pipeline:
      the spoken line plus a short hold.
   4. Card and clip are concatenated.
 
-Every stage degrades rather than fails: without a working voice the outro is
-rendered silent, and if the outro cannot be built at all the original clip is
-returned untouched.
+Requested voice cloning is strict. Silent end cards use an explicit mode.
+Failures stop the job rather than substituting speech or the original clip.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -105,7 +103,7 @@ def render_card(logo: Path | None, app_name: str, width: int, height: int,
             card.paste(art, ((width - art.size[0]) // 2,
                              centre_y - art.size[1] - int(height * 0.03)), mask)
         except Exception as exc:
-            log(f"could not draw logo: {exc}")
+            raise RuntimeError("Could not render the requested logo") from exc
 
     name_font = font(int(width * 0.082))
     bbox = draw.textbbox((0, 0), app_name, font=name_font)
@@ -210,6 +208,41 @@ def system_tts(line: str, out: Path, female: bool) -> bool:
         return False
 
 
+def render_voice(clip: Path, work: Path, assets: Path, tts_python: str,
+                 transcript: str | None, line: str, mode: str) -> Path | None:
+    """Produce the requested cloned voice, with no system-voice fallback."""
+    voice_wav = work / "line.wav"
+    reference = work / "reference.wav"
+    voice_wav.unlink(missing_ok=True)
+    reference.unlink(missing_ok=True)
+    if mode == "none":
+        return None
+    if mode != "clone":
+        raise RuntimeError(f"Unsupported outro voice mode: {mode}")
+    if not line.strip():
+        raise RuntimeError("Cloned outro requires a nonempty spoken line")
+    cloner = assets / "tts_clone.py"
+    picker = assets / "voice_pick.py"
+    if not Path(tts_python).is_file() or not cloner.is_file() or not picker.is_file():
+        raise RuntimeError("Voice cloning unavailable: configure TTS_PYTHON_BIN and install its requirements")
+    pick_cmd = [sys.executable, str(picker), "--audio", str(clip), "--out", str(reference)]
+    if transcript:
+        pick_cmd += ["--transcript", transcript]
+    subprocess.run(pick_cmd, check=True, text=True, capture_output=True, timeout=180)
+    if not reference.is_file() or reference.stat().st_size == 0:
+        raise RuntimeError("Voice selection produced no reference audio")
+    subprocess.run([tts_python, str(cloner), "--reference", str(reference),
+                    "--text", line, "--out", str(voice_wav)],
+                   check=True, text=True, stdout=subprocess.DEVNULL, timeout=900)
+    duration = probe_float(voice_wav, "format=duration") if voice_wav.is_file() else None
+    if not duration or duration <= 0:
+        raise RuntimeError("Voice cloning produced no playable audio")
+    if duration + HOLD_SECONDS > MAX_OUTRO_SECONDS:
+        raise RuntimeError("Cloned line is too long for the outro; shorten the spoken line")
+    log("cloned outro audio ready")
+    return voice_wav
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
@@ -218,8 +251,10 @@ def main() -> int:
     ap.add_argument("--transcript", help="clip-relative words, for speaker windows")
     ap.add_argument("--output", required=True)
     ap.add_argument("--line", help="override the spoken line")
+    ap.add_argument("--voice", choices=("clone", "none", "audio"), default="clone")
     ap.add_argument("--tts-python", default=os.path.expanduser("~/tts-venv/bin/python"))
     ap.add_argument("--assets", default=str(Path(__file__).parent))
+    ap.add_argument("--voice-audio", help="Generated speech audio from the application provider")
     args = ap.parse_args()
 
     clip = Path(args.clip).expanduser().resolve()
@@ -239,50 +274,18 @@ def main() -> int:
 
     line = args.line or f"Download {speakable(args.app_name)}"
 
-    # 1. Pick whose voice to use.
-    reference = work / "reference.wav"
-    picker = Path(args.assets) / "voice_pick.py"
-    pick_cmd = [sys.executable, str(picker), "--audio", str(clip),
-                "--out", str(reference)]
-    if args.transcript:
-        pick_cmd += ["--transcript", args.transcript]
-    voice_info = {}
-    try:
-        res = subprocess.run(pick_cmd, check=True, text=True, capture_output=True)
-        voice_info = json.loads(res.stdout.strip().splitlines()[-1])
-        log(f"voice: {voice_info.get('gender')} @ {voice_info.get('f0')} Hz "
-            f"({voice_info.get('speakers_found')} speaker(s) found)")
-    except Exception as exc:
-        log(f"voice selection failed: {exc}")
-
-    # The fallback voice should match the speaker the clip actually chose, so a
-    # female-voiced clip does not end in a male system voice.
-    is_female = str(voice_info.get("gender", "")).lower().startswith("f")
-
-    # 2. Clone it.
-    voice_wav = work / "line.wav"
-    cloner = Path(args.assets) / "tts_clone.py"
-    if reference.exists() and Path(args.tts_python).exists() and cloner.exists():
-        try:
-            subprocess.run(
-                [args.tts_python, str(cloner), "--reference", str(reference),
-                 "--text", line, "--out", str(voice_wav)],
-                check=True, text=True, capture_output=True, timeout=900)
-            log(f"cloned line: \"{line}\"")
-        except subprocess.TimeoutExpired:
-            log("voice cloning timed out; falling back to the system voice")
-            if system_tts(line, voice_wav, female=is_female):
-                log(f"system voice line: \"{line}\"")
-        except subprocess.CalledProcessError as exc:
-            log(f"voice cloning failed: {(exc.stderr or '')[-200:]}")
-            if system_tts(line, voice_wav, female=is_female):
-                log(f"system voice line: \"{line}\"")
+    if args.voice == "audio":
+        voice_wav = Path(args.voice_audio).resolve() if args.voice_audio else None
+        if not voice_wav or not voice_wav.is_file():
+            raise RuntimeError("Generated voice audio is missing")
+        duration = probe_float(voice_wav, "format=duration")
+        if not duration or duration <= 0 or duration + HOLD_SECONDS > MAX_OUTRO_SECONDS:
+            raise RuntimeError("Generated voice audio is invalid or too long; shorten the outro line")
     else:
-        log("voice cloning unavailable; using the system voice")
-        if system_tts(line, voice_wav, female=is_female):
-            log(f"system voice line: \"{line}\"")
+        voice_wav = render_voice(clip, work, Path(args.assets), args.tts_python,
+                                 args.transcript, line, args.voice)
 
-    spoken = probe_float(voice_wav, "format=duration") if voice_wav.exists() else None
+    spoken = probe_float(voice_wav, "format=duration") if voice_wav else None
     seconds = min(MAX_OUTRO_SECONDS,
                   max(MIN_OUTRO_SECONDS, (spoken or 0.0) + HOLD_SECONDS))
 
@@ -290,13 +293,12 @@ def main() -> int:
     card = work / "card.png"
     logo = Path(args.logo).expanduser().resolve() if args.logo else None
     if logo and not logo.exists():
-        log(f"logo not found, continuing without it: {logo}")
-        logo = None
+        raise SystemExit(f"logo not found: {logo}")
     if not render_card(logo, args.app_name, width, height, card):
         raise SystemExit("could not render the end card")
 
     outro_mp4 = work / "outro.mp4"
-    if not build_outro(card, voice_wav if voice_wav.exists() else None,
+    if not build_outro(card, voice_wav,
                        seconds, width, height, fps_raw, outro_mp4):
         raise SystemExit("could not build the outro")
 

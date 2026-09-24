@@ -4,9 +4,7 @@
 
 Making a promo video and cutting short-form clips are two separate jobs, with two separate intakes, and nothing ties either of them to a posting schedule. Distribution makes them one job: a founder describes their product once, and every generator downstream reads that same profile.
 
-Designed and built with **[Claude Fable 5.1](https://www.anthropic.com/claude/fable)**.
-
-**Live:** https://web-azure-five-fohgv9130t.vercel.app
+The application requires a persistent Node worker, Postgres and shared durable media storage. A marketing-site deployment does not provide those services.
 
 ---
 
@@ -24,27 +22,11 @@ Nothing publishes itself. Every asset lands in `review` and waits for a yes.
 
 ---
 
-## Verified, not claimed
+## Validation status
 
-Both pipelines were run end to end on a real shipped product — SafeChoice, a product-label scanner — using its real logo and App Store screenshots.
+The ongoing [production video audit](docs/production-video-audit-2026-09-21.md) records observed failures, fixes and test evidence. Local tests generated actual SafeChoice promos from its logo/screenshots, including four orientations and two store-preview cuts. Clipping tests used the nutrition documentary attached to SafeChoice; that source is not original SafeChoice product footage. Resulting promo and clip files passed full FFmpeg decoding.
 
-**Short-form run**, from a 203-second source video:
-
-```
-ingest -> transcribe -> rank moments -> cut 9:16 -> thumbnail -> copy
-```
-
-8 clips (30-59s, 1080x1920), 8 thumbnails, 40 copy rows across 5 platforms. Provider spend: **$0.076**.
-
-**Promo run**, from the product profile alone:
-
-```
-direct -> mix audio -> render x4 -> App Store cut
-```
-
-4 renders, 2 App Store cuts, a poster per deliverable and a written `CREATIVE_DIRECTION.md`, in **134 seconds**, with **zero API calls**.
-
-The promo director is deterministic. It picks one of four named act structures from the product's category, asset count and pain points, then derives every line of copy from what the founder actually wrote. It cannot invent a claim, it is unit-tested, and it costs nothing to run. The reference-video path that uses a model is opt-in.
+Queue failure, cancellation, ownership, concurrent scheduling, atomic storage, retry identity and provider-budget regressions are covered by executable tests in `scripts/`. Tests using injected faults are labelled separately from real provider/media runs. Authenticated browser acceptance and deployment verification remain open; this is not a production-readiness signoff.
 
 ---
 
@@ -55,7 +37,7 @@ apps/web        Next.js 16 - landing page, intake wizard, library, calendar
 apps/worker     pg-boss consumers: ffmpeg, Python sidecars, Remotion
 packages/
   core          domain schemas, asset state machine, redacting logger
-  db            21-table Postgres schema (Drizzle)
+  db            Postgres schema, migrations and provider-budget reservations (Drizzle)
   jobs          job registry, retry policy, idempotent enqueue, progress events
   media         subprocess runner, ffmpeg builders, brand-palette k-means
   providers     LLM router (7 providers) + STT (Deepgram / Whisper API / local)
@@ -77,6 +59,8 @@ The promo skill's creative work used to live as instructions to a coding agent t
 
 ## Running it
 
+See [runtime requirements and deployment checks](docs/runtime.md) for the web/worker/storage contract.
+
 ```bash
 createdb distribution
 cp .env.example .env          # DATABASE_URL, APP_SECRET, APP_PASSWORD at minimum
@@ -86,7 +70,7 @@ pnpm --filter @distribution/web dev       # http://localhost:3000
 pnpm --filter @distribution/worker start  # second terminal
 ```
 
-Needs `ffmpeg`, `yt-dlp` and Python 3.12+ with `vendor/autoshorts-py/requirements.txt`. Provider keys are optional: the promo path and palette sampling run without any.
+Needs Node 22.12 or newer, `ffmpeg`, `yt-dlp` and Python 3.12+ with `vendor/autoshorts-py/requirements.txt`. Provider keys are optional: the promo path and palette sampling run without any.
 
 Produce a promo with no API key at all:
 
@@ -99,7 +83,10 @@ pnpm exec tsx scripts/run-promo.ts <productId> 24
 ## Testing
 
 ```
-168 tests . 6 packages . lint and typecheck clean
+pnpm test
+pnpm lint
+pnpm typecheck
+pnpm --filter @distribution/web build
 ```
 
 The ported algorithms carry the original Rust test vectors. The promo director is tested for determinism, for filling its duration exactly, for never reproducing the template's running order, and for never referencing a screen that does not exist.
@@ -107,8 +94,6 @@ The ported algorithms carry the original Rust test vectors. The promo director i
 ---
 
 ## Credits
-
-Architecture, the Rust-to-TypeScript port, the film kit and every pipeline in this repository were designed and built with **Claude Fable 5.1**.
 
 Source systems: [promo-video-skill](https://github.com/aariz51/promo-video-skill) and a fork of [AutoShorts](https://github.com/JayWebtech/autoshorts). Rendering by [Remotion](https://remotion.dev) (commercial use may require a company licence). Fonts under SIL OFL. Full provenance in `vendor/README.md`.
 

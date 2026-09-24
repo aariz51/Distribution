@@ -45,6 +45,9 @@ export interface SourceItem {
   rights: string;
   status: string;
   failureReason: string | null;
+  screening?: { status: string; reason: string | null };
+  qualification?: string;
+  activeSourceJob?: { id: string; status: string; progressPct: number; currentStep: string | null; attempts: number; error: null; result: null };
   createdAt: string;
   latestProject: { id: string; status: string; createdAt: string } | null;
   clipCount: number;

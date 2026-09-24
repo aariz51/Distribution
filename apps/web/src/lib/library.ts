@@ -1,4 +1,5 @@
-import { getStorage } from "@distribution/storage";
+import { SCREENING_POLICY_VERSION, hasCompleteScreeningPass } from "@distribution/pipelines/screening-report";
+import { getStorage, storedContentHash } from "@distribution/storage";
 import { and, asc, assetCopy, assets, candidates, db, desc, eq, inArray, jobs, projects, sourceVideos, sql } from "./db";
 
 const storage = getStorage();
@@ -57,6 +58,9 @@ export interface SourceView {
   status: string;
   licenseText: string | null;
   failureReason: string | null;
+  screening?: { status: string; reason: string | null };
+  qualification?: string;
+  activeSourceJob?: { id: string; status: string; progressPct: number; currentStep: string | null; attempts: number; error: null; result: null };
   createdAt: string;
   latestProject: { id: string; status: string; createdAt: string } | null;
   clipCount: number;
@@ -164,7 +168,13 @@ export async function listSources(productId: string): Promise<SourceView[]> {
   const ids = rows.map((r) => r.id);
   const projs = ids.length ? await db.select().from(projects).where(and(eq(projects.productId, productId), inArray(projects.sourceId, ids))).orderBy(desc(projects.createdAt)) : [];
   const clipCounts = ids.length ? await db.select({ sourceId: assets.sourceId, n: sql<number>`count(*)` }).from(assets).where(and(inArray(assets.sourceId, ids), eq(assets.type, "clip"))).groupBy(assets.sourceId) : [];
-  return rows.map((r) => {
+  const activeSourceJobs = ids.length ? await db.select().from(jobs).where(and(inArray(jobs.sourceId, ids), inArray(jobs.type, ["source.probe", "source.ingest"]), sql`${jobs.status} in ('queued','started','progress','retrying')`)).orderBy(desc(jobs.createdAt)) : [];
+  return Promise.all(rows.map(async (r) => {
+    const active = activeSourceJobs.find(job => job.sourceId === r.id);
+    const evidence = r.probe?.screening as Record<string, unknown> | undefined;
+    const originalKey = typeof r.probe?.originalStorageKey === "string" ? r.probe.originalStorageKey : r.storageKey;
+    const actualHash = evidence?.status === "allowed" && originalKey ? await storedContentHash(originalKey, AbortSignal.timeout(15_000)).catch(() => null) : null;
+    const screeningStatus = evidence?.policyVersion !== SCREENING_POLICY_VERSION ? "pending" : evidence.status === "allowed" && (!actualHash || !hasCompleteScreeningPass(evidence, actualHash)) ? "pending" : String(evidence.status ?? "pending");
     const p = projs.find((x) => x.sourceId === r.id);
     return {
       id: r.id,
@@ -177,11 +187,14 @@ export async function listSources(productId: string): Promise<SourceView[]> {
       status: r.status,
       licenseText: r.licenseText,
       failureReason: r.failureReason,
+      screening: evidence ? { status: screeningStatus, reason: typeof evidence.reason === "string" ? evidence.reason : null } : undefined,
+      qualification: typeof r.probe?.qualification === "object" && r.probe.qualification ? String((r.probe.qualification as Record<string, unknown>).state) : undefined,
+      activeSourceJob: active ? { id: active.id, status: active.status, progressPct: active.progressPct, currentStep: active.currentStep, attempts: active.attempts, error: null, result: null } : undefined,
       createdAt: r.createdAt.toISOString(),
       latestProject: p ? { id: p.id, status: p.status, createdAt: p.createdAt.toISOString() } : null,
       clipCount: Number(clipCounts.find((c) => c.sourceId === r.id)?.n ?? 0),
     };
-  });
+  }));
 }
 
 export async function listJobs(productId: string, limit = 40): Promise<JobView[]> {

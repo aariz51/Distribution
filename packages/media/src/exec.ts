@@ -1,5 +1,7 @@
 import { execa, type Options as ExecaOptions, type ResultPromise } from "execa";
 import { PipelineError, redact } from "@distribution/core";
+import { StringDecoder } from "node:string_decoder";
+import type { Readable } from "node:stream";
 
 export interface RunOptions {
   cwd?: string;
@@ -24,6 +26,29 @@ export interface RunResult {
 
 const STDERR_TAIL = 40;
 
+/** A pipe chunk is not a line; tools may split both messages and UTF-8 characters. */
+function readLines(stream: Readable, onLine: (line: string) => void): void {
+  const decoder = new StringDecoder("utf8");
+  let fragments: string[] = [];
+  const drain = (text: string) => {
+    let start = 0;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== "\n" && text[i] !== "\r") continue;
+      if (i > start) fragments.push(text.slice(start, i));
+      if (fragments.length) onLine(fragments.join(""));
+      fragments = [];
+      start = i + 1;
+    }
+    if (start < text.length) fragments.push(text.slice(start));
+  };
+  stream.on("data", (chunk: Buffer) => drain(decoder.write(chunk)));
+  stream.once("end", () => {
+    drain(decoder.end());
+    if (fragments.length) onLine(fragments.join(""));
+    fragments = [];
+  });
+}
+
 /** Spawn a binary with an argv array (never a shell), a hard timeout, abort
  *  signal support, line callbacks and a bounded stderr tail on failure. */
 export async function run(bin: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
@@ -47,18 +72,13 @@ export async function run(bin: string, args: string[], opts: RunOptions = {}): P
     if (tail.length > STDERR_TAIL) tail.shift();
   };
   if (child.stderr) {
-    child.stderr.on("data", (chunk: Buffer) => {
-      for (const line of chunk.toString("utf8").split(/\r?\n|\r/)) {
-        if (!line) continue;
-        pushTail(line);
-        opts.onStderrLine?.(line);
-      }
+    readLines(child.stderr, line => {
+      pushTail(line);
+      opts.onStderrLine?.(line);
     });
   }
   if (child.stdout && opts.onStdoutLine) {
-    child.stdout.on("data", (chunk: Buffer) => {
-      for (const line of chunk.toString("utf8").split(/\r?\n/)) if (line) opts.onStdoutLine?.(line);
-    });
+    readLines(child.stdout, opts.onStdoutLine);
   }
   const res = await child;
   const durationMs = Date.now() - started;

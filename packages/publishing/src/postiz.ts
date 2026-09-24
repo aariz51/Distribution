@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { PipelineError, redact } from "@distribution/core";
@@ -161,34 +162,25 @@ export class PostizClient {
   }
 
   private async request(method: string, endpoint: string, init: RequestInit = {}, signal?: AbortSignal): Promise<unknown> {
+    const safeToRepeat = method === "GET" || method === "DELETE";
+    const attempts = safeToRepeat ? MAX_ATTEMPTS : 1;
     let lastErr: unknown;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(new Error("timeout")), REQUEST_TIMEOUT_MS);
-      const onAbort = () => ctrl.abort(new Error("cancelled"));
-      signal?.addEventListener("abort", onAbort);
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      signal?.throwIfAborted();
+      const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
       try {
-        const res = await this.fetchImpl(`${this.apiUrl}${endpoint}`, { ...init, method, signal: ctrl.signal });
+        const res = await this.fetchImpl(`${this.apiUrl}${endpoint}`, { ...init, method, signal: combined });
         const text = await res.text();
-        if (res.ok) return text ? JSON.parse(text) : {};
-        const err = new PostizError(res.status, text);
-        if (!err.retrySafe || attempt === MAX_ATTEMPTS - 1) throw err;
-        lastErr = err;
-        await sleep(Math.min(30, 2 ** attempt) * 1000);
+        if (!res.ok) throw new PostizError(res.status, text);
+        return text ? JSON.parse(text) : {};
       } catch (err) {
-        if (err instanceof PostizError) {
-          if (!err.retrySafe || attempt === MAX_ATTEMPTS - 1) throw err;
-          lastErr = err;
-          await sleep(Math.min(30, 2 ** attempt) * 1000);
-          continue;
-        }
-        if (signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false });
+        if (signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false, cause: err });
+        if (!safeToRepeat && err instanceof PostizError && [400, 401, 403, 404, 405, 413, 415, 422, 429].includes(err.status)) throw err;
+        if (!safeToRepeat) throw new PipelineError(`Postiz ${method} outcome could not be confirmed; check Postiz before submitting again: ${redact(String(err instanceof Error ? err.message : err))}`, { retrySafe: false, step: "publish", cause: err });
+        if (err instanceof PostizError && !err.retrySafe) throw err;
         lastErr = err;
-        if (attempt === MAX_ATTEMPTS - 1) break;
-        await sleep(Math.min(30, 2 ** attempt) * 1000);
-      } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
+        if (attempt < attempts - 1) await sleep(Math.min(30, 2 ** attempt) * 1000);
       }
     }
     throw new PipelineError(`Postiz request failed: ${redact(String(lastErr instanceof Error ? lastErr.message : lastErr))}`, { retrySafe: true, step: "publish", cause: lastErr });
@@ -213,16 +205,24 @@ export class PostizClient {
    * first (the ladder is `postiz_post.py:126-201`), because the API rejects
    * anything larger. The upload itself streams.
    */
-  async uploadFile(filePath: string, opts: { contentType?: string; signal?: AbortSignal; onLog?: (m: string) => void } = {}): Promise<UploadedMedia> {
+  async uploadFile(filePath: string, opts: { contentType?: string; signal?: AbortSignal; onLog?: (m: string) => void; validateMedia?: (file: string) => Promise<string> } = {}): Promise<UploadedMedia> {
     let sourcePath = filePath;
     const size = (await stat(filePath)).size;
     if (size > UPLOAD_LIMIT_BYTES) {
       sourcePath = await shrinkForUpload(filePath, { signal: opts.signal, onLog: opts.onLog });
     }
     const body = new FormData();
-    const fileSize = (await stat(sourcePath)).size;
-    const stream = createReadStream(sourcePath);
+    // Generated media is supplied by persistent runtime storage, not build output.
+    const fileSize = (await stat(/* turbopackIgnore: true */ sourcePath)).size;
+    const stream = createReadStream(/* turbopackIgnore: true */ sourcePath);
     const blob = await streamToBlob(stream, opts.contentType ?? "video/mp4");
+    // Compare the immutable upload body to evidence for the final transport
+    // file, including any size-reduction derivative. Never certify only input.
+    if (opts.validateMedia) {
+      const expected = await opts.validateMedia(sourcePath);
+      const actual = createHash("sha256").update(Buffer.from(await blob.arrayBuffer())).digest("hex");
+      if (actual !== expected) throw new PipelineError("Upload media changed after content screening", { step: "final_screening", retrySafe: false });
+    }
     body.set("file", blob, path.basename(sourcePath));
     const data = (await this.request("POST", "/upload", { headers: this.headers(), body }, opts.signal)) as Record<string, unknown>;
     const id = String(data.id ?? "");
@@ -249,9 +249,14 @@ export class PostizClient {
     return { id: ids[0] ?? "", ids, raw: data };
   }
 
-  async getPost(id: string, signal?: AbortSignal): Promise<PostStatus> {
-    const data = (await this.request("GET", `/posts/${encodeURIComponent(id)}`, { headers: this.headers() }, signal)) as Record<string, unknown>;
-    return interpretStatus(id, data);
+  async getPost(id: string, signal?: AbortSignal, scheduledFor = new Date()): Promise<PostStatus> {
+    const startDate = new Date(scheduledFor.getTime() - 86400000).toISOString();
+    const endDate = new Date(scheduledFor.getTime() + 86400000).toISOString();
+    const query = new URLSearchParams({ startDate, endDate });
+    const data = await this.request("GET", `/posts?${query}`, { headers: this.headers() }, signal) as { posts?: Record<string, unknown>[] };
+    if (!Array.isArray(data.posts)) throw new PipelineError("Postiz returned an invalid post list", { step: "poll" });
+    const post = data.posts.find(p => String(p.id) === id);
+    return interpretStatus(id, post ?? {});
   }
 
   /** Deleting an already-deleted post is not an error. */
@@ -271,15 +276,15 @@ export function collectIds(data: unknown): string[] {
   const d = data as Record<string, unknown>;
   if (Array.isArray(d.postId)) return (d.postId as Record<string, unknown>[]).map((p) => String(p.postId ?? p.id ?? "")).filter(Boolean);
   if (Array.isArray(d.ids)) return (d.ids as unknown[]).map(String).filter(Boolean);
-  if (Array.isArray(data)) return (data as Record<string, unknown>[]).map((p) => String(p.id ?? "")).filter(Boolean);
-  if (d.id) return [String(d.id)];
+  if (Array.isArray(data)) return (data as Record<string, unknown>[]).map((p) => String(p.postId ?? p.id ?? "")).filter(Boolean);
+  if (d.postId || d.id) return [String(d.postId ?? d.id)];
   return [];
 }
 
 /**
  * Postiz has reported state under several keys across versions, so read
  * defensively: an explicit error wins, then an explicit state, then a release
- * URL, then a past publish date with no error.
+ * URL. A past scheduled date alone never proves publication.
  */
 export function interpretStatus(id: string, data: Record<string, unknown>): PostStatus {
   const errorText = typeof data.error === "string" ? data.error : typeof data.errorMessage === "string" ? data.errorMessage : null;
@@ -289,13 +294,6 @@ export function interpretStatus(id: string, data: Record<string, unknown>): Post
   if (rawState === "ERROR") return { id, state: "error", publishedUrl: null, error: "provider reported ERROR", raw: data };
   if (rawState === "PUBLISHED" || rawState === "RELEASED") return { id, state: "published", publishedUrl: releaseUrl ?? null, error: null, raw: data };
   if (releaseUrl) return { id, state: "published", publishedUrl: releaseUrl, error: null, raw: data };
-  const publishDate = data.publishDate ?? data.date;
-  if (typeof publishDate === "string") {
-    const t = Date.parse(publishDate);
-    if (!Number.isNaN(t) && t <= Date.now() && rawState !== "QUEUE" && rawState !== "DRAFT") {
-      return { id, state: "published", publishedUrl: null, error: null, raw: data };
-    }
-  }
   return { id, state: rawState === "" ? "unknown" : "pending", publishedUrl: null, error: null, raw: data };
 }
 

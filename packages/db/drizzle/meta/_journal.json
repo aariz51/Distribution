@@ -8,6 +8,20 @@
       "when": 1789892218232,
       "tag": "0000_goofy_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790058824723,
+      "tag": "0001_gray_captain_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790061981832,
+      "tag": "0002_tiny_luckman",
+      "breakpoints": true
     }
   ]
 }

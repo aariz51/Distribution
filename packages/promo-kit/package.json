@@ -9,6 +9,7 @@
     "./render": "./src/render.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts PromoVertical out/promo-vertical.mp4 --crf 18"

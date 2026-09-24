@@ -3,13 +3,24 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
   "dependencies": {
     "@distribution/core": "workspace:*",
+    "busboy": "1.6.0",
     "execa": "^10.0.1",
     "sharp": "^0.35.4",
     "zod": "^4.6.5"
   },
-  "devDependencies": { "@types/node": "^26.6.2", "typescript": "^5.9.3", "vitest": "^5.0.1" }
+  "devDependencies": {
+    "@types/busboy": "^1.5.4",
+    "@types/node": "^26.6.2",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.1"
+  }
 }

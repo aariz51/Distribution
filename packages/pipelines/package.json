@@ -4,7 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./profile-assets": "./src/profile-assets.ts",
+    "./reference-ranking": "./src/promo/reference-ranking.ts",
+    "./reference-analysis": "./src/promo/direction.ts",
+    "./screening-report": "./src/shorts/screening-report.ts",
+    "./publishing-cover": "./src/publish/cover.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -15,14 +20,16 @@
     "@distribution/db": "workspace:*",
     "@distribution/jobs": "workspace:*",
     "@distribution/media": "workspace:*",
+    "@distribution/promo-kit": "workspace:*",
     "@distribution/providers": "workspace:*",
-    "@distribution/storage": "workspace:*",
-    "zod": "^4.6.5",
     "@distribution/publishing": "workspace:*",
-    "@distribution/promo-kit": "workspace:*"
+    "@distribution/storage": "workspace:*",
+    "twitter-text": "^3.1.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "@types/twitter-text": "^3.1.10",
     "typescript": "^5.9.3",
     "vitest": "^5.0.1"
   }

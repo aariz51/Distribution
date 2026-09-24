@@ -1,0 +1,260 @@
+{
+  "storyboard": {
+    "fps": 60,
+    "sfx": [
+      {
+        "t": 0.15,
+        "vol": 0.7,
+        "effect": "pop"
+      },
+      {
+        "t": 2.9,
+        "vol": 0.55,
+        "effect": "whoosh"
+      },
+      {
+        "t": 3.9,
+        "vol": 0.8,
+        "effect": "pop"
+      },
+      {
+        "t": 5.248,
+        "vol": 1,
+        "effect": "click"
+      },
+      {
+        "t": 5.311999999999999,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 6.5,
+        "vol": 0.55,
+        "effect": "whoosh"
+      },
+      {
+        "t": 7.424,
+        "vol": 0.95,
+        "effect": "click"
+      },
+      {
+        "t": 7.680000000000001,
+        "vol": 0.7,
+        "effect": "pop"
+      },
+      {
+        "t": 9.7,
+        "vol": 0.7,
+        "effect": "drag"
+      },
+      {
+        "t": 11.2,
+        "vol": 0.5,
+        "effect": "sparkle"
+      },
+      {
+        "t": 13.7,
+        "vol": 0.55,
+        "effect": "whoosh"
+      },
+      {
+        "t": 14.879999999999999,
+        "vol": 0.95,
+        "effect": "click"
+      },
+      {
+        "t": 15.2,
+        "vol": 0.7,
+        "effect": "pop"
+      },
+      {
+        "t": 17.650000000000002,
+        "vol": 0.8,
+        "effect": "pop"
+      },
+      {
+        "t": 18.32,
+        "vol": 0.8,
+        "effect": "pop2"
+      },
+      {
+        "t": 18.92,
+        "vol": 0.8,
+        "effect": "pop"
+      },
+      {
+        "t": 20.2,
+        "vol": 0.75,
+        "effect": "sparkle"
+      },
+      {
+        "t": 20.5,
+        "vol": 0.9,
+        "effect": "chime"
+      }
+    ],
+    "logo": "logo/app-logo.png",
+    "width": 1080,
+    "height": 1920,
+    "scenes": [
+      {
+        "id": "hook-1",
+        "copy": {
+          "line": "Know what is really inside any product you buy",
+          "glyph": "?"
+        },
+        "kind": "hook",
+        "start": 0,
+        "duration": 168
+      },
+      {
+        "id": "oneTap-2",
+        "copy": {
+          "line1": "Know what is really inside",
+          "line2": "any product you buy",
+          "buttonLabel": "SCAN"
+        },
+        "kind": "oneTap",
+        "start": 168,
+        "duration": 120
+      },
+      {
+        "id": "press-3",
+        "copy": {
+          "buttonLabel": "SCAN"
+        },
+        "kind": "press",
+        "start": 288,
+        "duration": 96
+      },
+      {
+        "id": "dashboard-4",
+        "copy": {
+          "pre": "Know",
+          "chip": "Scan any product…",
+          "post": "is really inside any product you buy",
+          "accent": "what",
+          "chipSub": "health"
+        },
+        "kind": "dashboard",
+        "start": 384,
+        "screens": [
+          "screen4"
+        ],
+        "duration": 192
+      },
+      {
+        "id": "orbit-5",
+        "copy": {
+          "titleRest": "you need.",
+          "titleAccent": "Everything"
+        },
+        "kind": "orbit",
+        "start": 576,
+        "screens": [
+          "screen5",
+          "screen6",
+          "screen1",
+          "screen2",
+          "screen3",
+          "screen4"
+        ],
+        "duration": 240
+      },
+      {
+        "id": "dashboard-6",
+        "copy": {
+          "pre": "Know",
+          "chip": "Scan any product…",
+          "post": "is really inside any product you buy",
+          "accent": "what",
+          "chipSub": "health"
+        },
+        "kind": "dashboard",
+        "start": 816,
+        "screens": [
+          "screen6"
+        ],
+        "duration": 240
+      },
+      {
+        "id": "tagline-7",
+        "copy": {
+          "w1": "Scan.",
+          "w2": "Know.",
+          "w3": "Ask."
+        },
+        "kind": "tagline",
+        "start": 1056,
+        "duration": 144
+      },
+      {
+        "id": "logo-8",
+        "copy": {
+          "badge1": "App Store",
+          "badge2": "Google Play",
+          "tagline": "Know what is really inside any product you buy",
+          "badge1Top": "Download on the",
+          "badge2Top": "GET IT ON"
+        },
+        "kind": "logo",
+        "start": 1200,
+        "duration": 240
+      }
+    ],
+    "product": {
+      "cta": "Download on the App Store & Google Play",
+      "name": "SafeChoice",
+      "tagline": "Know what is really inside any product you buy"
+    },
+    "screens": {
+      "screen1": "app-screens/01-screen.png",
+      "screen2": "app-screens/02-screen.png",
+      "screen3": "app-screens/03-screen.png",
+      "screen4": "app-screens/04-screen.png",
+      "screen5": "app-screens/05-screen.png",
+      "screen6": "app-screens/06-screen.png"
+    },
+    "audioSrc": "audio/master.wav",
+    "durationFrames": 1440
+  },
+  "theme": {
+    "fonts": {
+      "body": "InterVar",
+      "head": "Baloo 2",
+      "mono": "ui-monospace, SFMono-Regular, Menlo, monospace",
+      "files": [
+        {
+          "src": "fonts/Baloo2.ttf",
+          "family": "Baloo 2",
+          "weight": "400 800"
+        },
+        {
+          "src": "fonts/Inter.ttf",
+          "family": "InterVar",
+          "weight": "100 900"
+        }
+      ]
+    },
+    "colors": {
+      "ink": "#091710",
+      "gold": "#77b797",
+      "safe": "#10B981",
+      "avoid": "#EF4444",
+      "blush": "#e4f1ea",
+      "cream": "#f9f6e9",
+      "white": "#FFFFFF",
+      "accent": "#bb905f",
+      "caution": "#F97316",
+      "inkSoft": "#787f7c",
+      "primary": "#3d986a",
+      "goldSoft": "#add4c1",
+      "safeSoft": "#6EE7B7",
+      "creamDeep": "#eae7db",
+      "accentSoft": "#d3b797",
+      "primaryDeep": "#2b6a4a",
+      "primarySoft": "#77b797"
+    },
+    "screenRatio": 0.46153846153846156
+  }
+}

@@ -46,6 +46,17 @@ function profile(over: Partial<ProductProfile["product"]> = {}, palette = true):
 
 const screens5 = { screen1: "app-screens/01.png", screen2: "app-screens/02.png", screen3: "app-screens/03.png", screen4: "app-screens/04.png", screen5: "app-screens/05.png" };
 
+it("uses real product screens instead of inventing a numerical result or solved claim", () => {
+  const { storyboard } = buildStoryboard({ profile: profile({ category: { primary: "health", tags: [] } }), screens: screens5, logo: "logo.png" });
+  expect(storyboard.scenes.some(scene => scene.kind === "verdict")).toBe(false);
+  expect(storyboard.scenes.some(scene => "score" in scene.copy)).toBe(false);
+  expect(storyboard.scenes.filter(scene => scene.kind === "dashboard").length).toBeGreaterThan(0);
+  const longTagline = "Know what is really inside any product before you choose";
+  const long = buildStoryboard({ profile: profile({ tagline: longTagline }), screens: screens5, logo: "logo.png" });
+  const proof = long.storyboard.scenes.find(scene => scene.kind === "dashboard")!;
+  expect([proof.copy.pre, proof.copy.accent, proof.copy.post].join(" ")).toBe(longTagline);
+});
+
 describe("structure choice", () => {
   it("is deterministic and driven by the product, not a fixed default", () => {
     const edu = chooseStructure({ category: "education", tags: [], screenCount: 5, featureCount: 3, painPointCount: 2 });
@@ -126,4 +137,18 @@ describe("themeForProduct", () => {
     const t = themeForProduct(profile({}, false));
     expect(t.colors.primary).toBe("#4F46E5");
   });
+});
+
+ it("preserves complete hook and feature titles instead of cutting phrases", () => {
+  const tagline = "Know what is really inside any product you buy";
+  const p = profile({ tagline, audience: { summary: "Shoppers", segments: [], painPoints: [] } });
+  const { storyboard } = buildStoryboard({ profile: p, screens: screens5, logo: "l.png", structure: {
+    id: "copy-test", rationale: "Verify full product copy", beats: [
+      { kind: "hook", weight: 1 }, { kind: "features", weight: 2 },
+      { kind: "dashboard", weight: 2 }, { kind: "logo", weight: 1 },
+    ],
+  } });
+  expect(storyboard.scenes[0]!.copy.line).toBe(tagline);
+  const features = storyboard.scenes.find(scene => scene.kind === "features")!;
+  p.product.features.forEach((feature, i) => expect(features.copy[`f${i + 1}`]).toBe(feature.title));
 });

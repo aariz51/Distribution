@@ -2,11 +2,35 @@ import path from "node:path";
 import os from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
 import { PipelineError, ProductProfile, type Palette } from "@distribution/core";
-import { eq, features, products, sourceVideos, transcripts, type Db } from "@distribution/db";
+import { and, desc, eq, features, products, productVersions, projects, sql, sourceVideos, transcripts, type Db } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
 import type { JobTypeName } from "@distribution/jobs";
 
-export async function loadProfile(db: Db, productId: string): Promise<ProductProfile> {
+export async function loadProfile(db: Db, productId: string, projectId?: string | null): Promise<ProductProfile> {
+  if (!projectId) return loadCurrentProfile(db, productId);
+  return db.transaction(async tx => {
+    const project = (await tx.select().from(projects).where(eq(projects.id, projectId)).for("update"))[0];
+    if (!project || project.productId !== productId) throw new PipelineError("Project does not belong to this product", { step: "load" });
+    if (project.params.profileSnapshot) {
+      const snapshot = ProductProfile.parse(project.params.profileSnapshot);
+      if (snapshot.id !== productId || snapshot.version !== project.profileVersion) throw new PipelineError("Invalid project profile snapshot", { step: "load" });
+      return snapshot;
+    }
+    // One-time compatibility for old projects. Never silently substitute a new
+    // profile version when its historical configuration cannot be recovered.
+    const current = await loadCurrentProfile(tx, productId);
+    let snapshot = current;
+    if (current.version !== project.profileVersion) {
+      const historical = (await tx.select().from(productVersions).where(and(eq(productVersions.productId, productId), eq(productVersions.version, project.profileVersion))).limit(1))[0];
+      if (!historical) throw new PipelineError("Run configuration is unavailable. Start a new run from the source.", { step: "load" });
+      snapshot = ProductProfile.parse({ ...current, ...historical.snapshot, id: productId, accountId: current.accountId, version: project.profileVersion });
+    }
+    await tx.update(projects).set({ params: sql`${projects.params} || ${JSON.stringify({ profileSnapshot: snapshot })}::jsonb` }).where(eq(projects.id, projectId));
+    return snapshot;
+  });
+}
+
+async function loadCurrentProfile(db: Pick<Db, "select">, productId: string): Promise<ProductProfile> {
   const row = (await db.select().from(products).where(eq(products.id, productId)).limit(1))[0];
   if (!row) throw new PipelineError("product not found", { step: "load" });
   const feats = await db.select().from(features).where(eq(features.productId, productId));
@@ -31,9 +55,10 @@ export async function loadSource(db: Db, sourceId: string) {
   return row;
 }
 
-export async function latestTranscript(db: Db, sourceId: string) {
-  const rows = await db.select().from(transcripts).where(eq(transcripts.sourceId, sourceId)).orderBy(transcripts.createdAt).limit(50);
-  return rows[rows.length - 1];
+export async function latestTranscript(db: Db, sourceId: string, cacheKey: string) {
+  return (await db.select().from(transcripts)
+    .where(and(eq(transcripts.sourceId, sourceId), eq(transcripts.cacheKey, cacheKey)))
+    .orderBy(desc(transcripts.createdAt)).limit(1))[0];
 }
 
 /** Per-job scratch directory, removed when the callback settles. */

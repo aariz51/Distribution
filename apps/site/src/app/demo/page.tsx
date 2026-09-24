@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export const metadata = {
   title: "Distribution — real output",
-  description: "The actual files one product profile produced: four promo cuts, an App Store cut, and the written creative direction.",
+  description: "The actual files one product profile produced: promo cuts, App Store previews, and the written creative direction.",
 };
 
 const FILMS = [
@@ -12,10 +12,10 @@ const FILMS = [
 ];
 
 const FACTS: [string, string][] = [
-  ["Time to produce all four cuts", "134 seconds"],
-  ["API calls made", "0"],
-  ["Provider cost", "$0.00"],
-  ["Written by hand", "nothing"],
+  ["Verified promo runs", "2"],
+  ["Exports per run", "6 videos"],
+  ["Branded source clips", "2"],
+  ["Clip covers verified", "6"],
 ];
 
 const PALETTE: [string, string][] = [
@@ -51,8 +51,8 @@ export default function DemoPage() {
           <h1 className="max-w-[20ch] text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] sm:text-[48px]">What one product profile produced.</h1>
           <p className="mt-5 max-w-[62ch] text-[17px] leading-relaxed text-muted">
             These files were generated from a single profile for <span className="text-ink">SafeChoice</span>, a shipped
-            product-label scanner, using its real logo and App Store screenshots. Nobody wrote a storyboard, picked a
-            colour or edited a timeline. The palette below was sampled from the app icon.
+            product-label scanner, using its real logo and screenshots. These previews come from the verified 24-second
+            run. The full workflow also produced playable branded clips, covers and a clip with stock footage, sound effects and a female voice outro.
           </p>
           <dl className="mt-10 grid gap-px overflow-hidden rounded-[10px] border border-hairline bg-hairline sm:grid-cols-4">
             {FACTS.map(([k, v]) => (
@@ -76,12 +76,12 @@ export default function DemoPage() {
 
         <section className="py-16">
           <h2 className="text-[24px] font-semibold tracking-[-0.02em]">The films</h2>
-          <p className="mt-2 max-w-[62ch] text-muted">One storyboard, four deliverables. Each is a native render at its own size, not a crop of the others.</p>
+          <p className="mt-2 max-w-[62ch] text-muted">Three previews from six verified exports. Each format has its own composition.</p>
           <div className="mt-10 grid gap-6 lg:grid-cols-3">
             {FILMS.map((f) => (
               <figure key={f.id} className="overflow-hidden rounded-[10px] border border-hairline bg-surface">
                 <div className={`bg-[#0b0c10] ${f.portrait ? "aspect-[9/16]" : "aspect-video"}`}>
-                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  {/* Muted, wordless promo cuts: there is no speech to caption. */}
                   <video className="h-full w-full object-contain" src={f.src} poster={f.poster} controls playsInline preload="metadata" />
                 </div>
                 <figcaption className="p-4">
@@ -92,7 +92,7 @@ export default function DemoPage() {
               </figure>
             ))}
           </div>
-          <p className="mt-6 text-[13px] text-muted">Videos are compressed and muted here for page weight. The originals render at CRF 18 with a mixed sound master.</p>
+          <p className="mt-6 text-[13px] text-muted">These previews are compressed and muted for this page. The dimensions above describe the original exports.</p>
         </section>
 
         <section className="border-t border-hairline py-16">
@@ -116,13 +116,15 @@ export default function DemoPage() {
           </p>
           <pre className="mt-6 overflow-x-auto rounded-[10px] border border-hairline bg-surface p-5 font-mono text-[12px] leading-relaxed text-muted">
 {`git clone https://github.com/aariz51/Distribution
+cd Distribution
 createdb distribution
 cp .env.example .env
 pnpm install && pnpm --filter @distribution/db migrate
 pnpm --filter @distribution/web dev        # the app
 pnpm --filter @distribution/worker start   # the pipelines
 
-# a promo from a profile, no API key needed:
+# configure providers and runtime dependencies as described in README.md;
+# then generate a promo from a saved profile:
 pnpm exec tsx scripts/run-promo.ts <productId> 24`}
           </pre>
         </section>
@@ -131,7 +133,7 @@ pnpm exec tsx scripts/run-promo.ts <productId> 24`}
       <footer className="border-t border-hairline">
         <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center justify-between gap-4 px-6 py-8 text-[12px] text-faint">
           <span>Distribution</span>
-          <p>Built with Claude Fable 5.1.</p>
+          <p>Real SafeChoice outputs · verified end to end.</p>
         </div>
       </footer>
     </div>

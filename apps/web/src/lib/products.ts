@@ -1,6 +1,7 @@
-import { newId, slugify, ProductProfile, ProductProfileInput, type Palette } from "@distribution/core";
-import { and, assets, brandAssets, db, desc, eq, features, inArray, products, productVersions, sql } from "./db";
+import { newId, slugify, ValidationError, ProductProfile, ProductProfileInput, type Palette } from "@distribution/core";
+import { and, assets, brandAssets, db, desc, eq, features, inArray, products, productVersions, sourceVideos, sql } from "./db";
 import { NotFound } from "./api";
+import { requestId, requestHash } from "./request-key";
 import { getStorage } from "@distribution/storage";
 
 type ProductRow = typeof products.$inferSelect;
@@ -42,13 +43,33 @@ export async function getProduct(accountId: string, id: string): Promise<Product
   return toProfile(row, feats);
 }
 
-export async function createProduct(accountId: string, input: ProductProfileInput): Promise<ProductProfile> {
-  const id = newId();
+async function normalizeSources(input: ProductProfileInput["sources"]) {
+  const { canonicalChannel } = await import("@distribution/media");
+  const connected = input.connected.map(source => source.kind === "youtube_channel" ? { ...source, url: canonicalChannel(source.url) } : source);
+  return { ...input, connected: [...new Map(connected.map(source => [`${source.kind}:${source.url}`, source])).values()] };
+}
+
+export async function createProduct(accountId: string, input: ProductProfileInput, sourceInputs: { url: string; rights: "owned" | "licensed" }[] = [], operationKey?: string): Promise<ProductProfile> {
+  const { canonicalUrl, parseVideoId } = await import("@distribution/media");
+  const initialSources = [...new Map(sourceInputs.map(source => { const videoId = parseVideoId(source.url); return [String(videoId), { id: newId(), url: canonicalUrl(videoId), externalId: String(videoId), rights: source.rights }]; })).values()];
+  const sources = { ...await normalizeSources(input.sources), longFormSourceIds: [...input.sources.longFormSourceIds, ...initialSources.map(source => source.id)] };
+  const id = operationKey ? requestId(`product:${accountId}`, operationKey) : newId();
+  const inputHash = requestHash({ input, sourceInputs });
   const { features: feats, ...productNoFeatures } = input.product;
   const baseSlug = slugify(input.product.name);
-  const taken = await db.select({ slug: products.slug }).from(products).where(and(eq(products.accountId, accountId), sql`${products.slug} like ${baseSlug + "%"}`));
-  const slug = taken.some((t) => t.slug === baseSlug) ? `${baseSlug}-${taken.length + 1}` : baseSlug;
   await db.transaction(async (tx) => {
+    // Serialize creations for this account so both request replay and slug allocation are atomic.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`product-create:${accountId}`}, 0))`);
+    const existing = (await tx.select().from(products).where(and(eq(products.id, id), eq(products.accountId, accountId))))[0];
+    if (existing) {
+      const initial = (await tx.select().from(productVersions).where(and(eq(productVersions.productId, id), eq(productVersions.version, 1))))[0];
+      if (initial?.snapshot.intakeRequestHash !== inputHash) throw new ValidationError("This setup request was already used with different product details");
+      return;
+    }
+    const taken = await tx.select({ slug: products.slug }).from(products).where(and(eq(products.accountId, accountId), sql`${products.slug} like ${baseSlug + "%"}`));
+    const used = new Set(taken.map(row => row.slug));
+    let slug = baseSlug;
+    for (let suffix = 2; used.has(slug); suffix++) slug = `${baseSlug}-${suffix}`;
     await tx.insert(products).values({
       id,
       accountId,
@@ -56,33 +77,38 @@ export async function createProduct(accountId: string, input: ProductProfileInpu
       version: 1,
       product: productNoFeatures,
       brand: input.brand,
-      sources: input.sources,
+      sources,
       publishing: input.publishing,
       contentPreferences: input.contentPreferences,
     });
     for (const f of feats) {
       await tx.insert(features).values({ id: f.id ?? newId(), productId: id, title: f.title, detail: f.detail ?? null, priority: f.priority, evidenceAssetIds: f.evidenceAssetIds ?? [] });
     }
-    await tx.insert(productVersions).values({ id: newId(), productId: id, version: 1, snapshot: input as Record<string, unknown> });
+    for (const source of initialSources) await tx.insert(sourceVideos).values({ ...source, productId: id, kind: "youtube", platform: "youtube", status: "discovered" });
+    await tx.insert(productVersions).values({ id: newId(), productId: id, version: 1, snapshot: { ...input, sources, intakeRequestHash: inputHash } as Record<string, unknown> });
   });
   return getProduct(accountId, id);
 }
 
 /** Full-profile update; bumps the version and snapshots it (Gate 2 §8). */
-export async function updateProduct(accountId: string, id: string, input: ProductProfileInput): Promise<ProductProfile> {
-  const current = await getProduct(accountId, id);
+export async function updateProduct(accountId: string, id: string, input: ProductProfileInput, expectedVersion?: number, expectedUpdatedAt?: string): Promise<ProductProfile> {
+  await getProduct(accountId, id);
+  const sources = await normalizeSources(input.sources);
   const { features: feats, ...productNoFeatures } = input.product;
-  const version = current.version + 1;
   await db.transaction(async (tx) => {
+    const current = (await tx.select().from(products).where(and(eq(products.id, id), eq(products.accountId, accountId))).for("update"))[0];
+    if (!current) throw new NotFound("product");
+    if ((expectedVersion !== undefined && current.version !== expectedVersion) || (expectedUpdatedAt !== undefined && current.updatedAt.toISOString() !== expectedUpdatedAt)) throw new ValidationError("This product changed in another session. Reload before saving.");
+    const version = current.version + 1;
     await tx
       .update(products)
-      .set({ version, product: productNoFeatures, brand: input.brand, sources: input.sources, publishing: input.publishing, contentPreferences: input.contentPreferences, updatedAt: sql`now()` })
+      .set({ version, product: productNoFeatures, brand: input.brand, sources, publishing: input.publishing, contentPreferences: input.contentPreferences, updatedAt: sql`now()` })
       .where(eq(products.id, id));
     await tx.delete(features).where(eq(features.productId, id));
     for (const f of feats) {
       await tx.insert(features).values({ id: f.id ?? newId(), productId: id, title: f.title, detail: f.detail ?? null, priority: f.priority, evidenceAssetIds: f.evidenceAssetIds ?? [] });
     }
-    await tx.insert(productVersions).values({ id: newId(), productId: id, version, snapshot: input as Record<string, unknown> });
+    await tx.insert(productVersions).values({ id: newId(), productId: id, version, snapshot: { ...input, sources } as Record<string, unknown> });
   });
   return getProduct(accountId, id);
 }

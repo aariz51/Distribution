@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { newId, RightsClass, ValidationError } from "@distribution/core";
-import { parseVideoId, canonicalUrl } from "@distribution/media";
+import { parseVideoId, canonicalUrl, withStagedUpload, probeMedia } from "@distribution/media";
 import { getStorage, keys } from "@distribution/storage";
 import { requireSession } from "@/lib/auth";
 import { handler, json } from "@/lib/api";
-import { db, sourceVideos } from "@/lib/db";
+import { and, db, eq, products, sourceVideos } from "@/lib/db";
 import { getProduct } from "@/lib/products";
 import { listSources } from "@/lib/library";
-import { startRun } from "@/lib/runs";
+import { startImportedSource } from "@/lib/runs";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -38,28 +38,38 @@ export const POST = handler(async (req, ctx: Ctx) => {
   const contentType = req.headers.get("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
-    const form = await req.formData();
-    const file = form.get("file");
-    const rights = RightsClass.parse(form.get("rights") ?? "owned");
-    if (!(file instanceof File)) throw new ValidationError("file missing");
-    if (file.size > MAX_UPLOAD) throw new ValidationError("file too large");
-    const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-    if (!ALLOWED_EXT.has(ext)) throw new ValidationError("unsupported media type", { ext });
-    if (rights === "unknown") throw new ValidationError("uploads must declare rights (owned, licensed, or attested)");
-    const key = keys.sourceOriginal(productId, sourceId, ext === "mov" || ext === "webm" ? ext : ext);
-    const storage = getStorage();
-    const p = await storage.localPathFor(key);
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(p, Buffer.from(await file.arrayBuffer()));
-    await db.insert(sourceVideos).values({ id: sourceId, productId, kind: "upload", title: file.name, rights, status: "queued", storageKey: key, attestation: rights === "third_party_attested" ? { text: String(form.get("attestation") ?? "permission attested at upload"), userId: s.userId, at: new Date().toISOString() } : null });
-    const run = await startRun(productId, sourceId);
-    return json({ sourceId, ...run }, { status: 201 });
+    return withStagedUpload(req, { maxBytes: MAX_UPLOAD }, async file => {
+      const rights = RightsClass.parse(file.fields.rights ?? "unknown");
+      const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+      if (!ALLOWED_EXT.has(ext)) throw new ValidationError("Unsupported media type", { ext });
+      if (rights === "unknown") throw new ValidationError("Declare whether this upload is owned, licensed, or used with permission");
+      const attestation = file.fields.attestation?.trim();
+      if (rights === "third_party_attested" && (!attestation || attestation.length < 10)) throw new ValidationError("Permission attestation text is required");
+      const probe = await probeMedia(file.path, { signal: req.signal });
+      if (!probe.hasVideo || !probe.hasAudio || probe.durationSec <= 0) throw new ValidationError("Upload a playable video with an audio track");
+      const key = keys.sourceOriginal(productId, sourceId, ext);
+      const storage = getStorage();
+      await storage.putFile(key, file.path, { contentType: file.contentType || "application/octet-stream" });
+      try {
+        await db.insert(sourceVideos).values({ id: sourceId, productId, kind: "upload", title: file.name, rights, status: "discovered", storageKey: key, attestation: rights === "third_party_attested" ? { text: attestation!, userId: s.userId, at: new Date().toISOString() } : null });
+      } catch (error) {
+        await storage.delete(key);
+        throw error;
+      }
+      const run = await startImportedSource(productId, sourceId);
+      return json({ sourceId, ...run }, { status: 201 });
+    });
   }
 
   const body = UrlBody.parse(await req.json());
   const vid = parseVideoId(body.url);
   if (body.rights === "third_party_attested" && !body.attestation) throw new ValidationError("attestation text required for third-party sources");
-  await db.insert(sourceVideos).values({
+  await db.transaction(async tx => {
+    // Discovery takes this same product lock before checking/inserting URLs.
+    await tx.select({ id: products.id }).from(products).where(eq(products.id, productId)).for("update");
+    const existing = await tx.select({ id: sourceVideos.id }).from(sourceVideos).where(and(eq(sourceVideos.productId, productId), eq(sourceVideos.url, canonicalUrl(vid)))).limit(1);
+    if (existing.length) throw new ValidationError("This video is already saved. Open its source to generate clips or retry processing.");
+    await tx.insert(sourceVideos).values({
     id: sourceId,
     productId,
     kind: "youtube",
@@ -67,9 +77,10 @@ export const POST = handler(async (req, ctx: Ctx) => {
     platform: "youtube",
     externalId: String(vid),
     rights: body.rights,
-    status: body.run ? "queued" : "discovered",
+    status: "discovered",
     attestation: body.attestation ? { ...body.attestation, userId: s.userId, at: new Date().toISOString() } : null,
   });
-  const run = body.run ? await startRun(productId, sourceId) : {};
+  });
+  const run = body.run ? await startImportedSource(productId, sourceId) : {};
   return json({ sourceId, ...run }, { status: 201 });
 });

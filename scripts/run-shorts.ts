@@ -1,3 +1,4 @@
+import { loadProfile } from "../packages/pipelines/src/shorts/common";
 /**
  * Start a shorts run for a product from a local file (rights: owned) without the web app.
  *   pnpm exec tsx scripts/run-shorts.ts --product <productId> --file /path/to/video.mp4
@@ -30,8 +31,9 @@ async function main() {
   await copyFile(file, await storage.localPathFor(key));
   await storage.commit(key);
   await db.insert(sourceVideos).values({ id: sourceId, productId, kind: "upload", title: path.basename(file), rights: "owned", status: "queued", storageKey: key, attestation: { text: "local file supplied by the founder as own content", at: new Date().toISOString() } });
+  const profileSnapshot = await loadProfile(db, productId);
   const projectId = newId();
-  await db.insert(projects).values({ id: projectId, productId, kind: "shorts", profileVersion: product.version, sourceId, status: "created" });
+  await db.insert(projects).values({ id: projectId, productId, kind: "shorts", profileVersion: product.version, sourceId, params: { profileSnapshot }, status: "created" });
   const queue = await JobQueue.start(db);
   const res = await queue.enqueue("source.ingest", { productId, sourceId, projectId }, { productId, projectId, sourceId, singletonKey: `source.ingest:${sourceId}:${projectId}` });
   await queue.stop();

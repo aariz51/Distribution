@@ -43,13 +43,22 @@ export interface FetchJsonOptions {
   log?: { warn: (o: object, m?: string) => void };
 }
 
-const sleep = (ms: number, signal?: AbortSignal) =>
+export const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(t);
+    if (signal?.aborted) {
       reject(new PipelineError("cancelled", { retrySafe: false }));
-    });
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new PipelineError("cancelled", { retrySafe: false }));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 
 /** POST JSON with the shared retry/timeout policy. Returns parsed JSON and attempt count. */
@@ -58,6 +67,7 @@ export async function postJsonWithRetry<T>(opts: FetchJsonOptions): Promise<{ da
   let adjusted = false;
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (opts.signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new Error("total timeout")), TOTAL_TIMEOUT_MS);
     const onAbort = () => ctrl.abort(new Error("cancelled"));
@@ -101,6 +111,7 @@ export async function postJsonWithRetry<T>(opts: FetchJsonOptions): Promise<{ da
       opts.log?.warn({ provider: opts.provider, status: res.status, attempt, wait }, "retrying provider call");
       await sleep(wait * 1000, opts.signal);
     } catch (err) {
+      if (opts.signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false });
       if (err instanceof ProviderHttpError) {
         if (!err.retrySafe || attempt === MAX_ATTEMPTS - 1) throw err;
         lastErr = err;

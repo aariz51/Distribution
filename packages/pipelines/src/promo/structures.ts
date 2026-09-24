@@ -25,7 +25,8 @@ export const STRUCTURES: Record<string, Structure> = {
       { kind: "hook", weight: 3.5 },
       { kind: "oneTap", weight: 2.5 },
       { kind: "press", weight: 2 },
-      { kind: "verdict", weight: 4 },
+      // Proof comes from an uploaded product screen, never an invented score.
+      { kind: "dashboard", weight: 4 },
       { kind: "orbit", weight: 5 },
       { kind: "dashboard", weight: 5 },
       { kind: "tagline", weight: 3 },

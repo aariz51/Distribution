@@ -1,4 +1,5 @@
 "use client";
+import { JobProgress } from "./JobProgress";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -11,12 +12,18 @@ const RIGHTS_LABEL: Record<string, string> = { owned: "Owned", licensed: "Licens
 
 export function SourceRow({ productId, source: s }: { productId: string; source: SourceView }) {
   const router = useRouter();
+  const [editingRights, setEditingRights] = useState(false);
+  const [rights, setRights] = useState(s.rights);
+  const [confirmed, setConfirmed] = useState(false);
+  const [explanation, setExplanation] = useState("");
+  const [probeJobId, setProbeJobId] = useState<string | null>(null);
+  const [probeActive, setProbeActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const rightsUnknown = s.rights === "unknown";
-  const runnable = (s.status === "ready" || s.status === "queued") && !rightsUnknown;
-  const runActive = s.latestProject && !["completed", "failed", "cancelled", "published", "archived"].includes(s.latestProject.status);
+  const runnable = ["discovered", "failed", "ready", "queued"].includes(s.status) && !rightsUnknown;
+  const runActive = s.activeSourceJob || s.latestProject && !["completed", "failed", "cancelled", "published", "archived"].includes(s.latestProject.status);
   const why = !runnable
     ? rightsUnknown
       ? "Set rights before processing"
@@ -32,6 +39,17 @@ export function SourceRow({ productId, source: s }: { productId: string; source:
     : runActive
       ? "A run is already in progress"
       : null;
+
+  async function saveRights() {
+    setBusy(true); setError(null);
+    try {
+      const response = await fetch(`/api/products/${productId}/sources/${s.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ rights, confirmed, explanation: explanation || undefined }) });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Could not save rights");
+      setEditingRights(false); setConfirmed(false); router.refresh();
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+    finally { setBusy(false); }
+  }
 
   async function run() {
     setBusy(true);
@@ -55,6 +73,20 @@ export function SourceRow({ productId, source: s }: { productId: string; source:
     }
   }
 
+  async function inspect() {
+    setProbeActive(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/products/${productId}/sources/${s.id}/probe`, { method: "POST" });
+      const body = await response.json() as { jobId?: string; error?: string };
+      if (!response.ok || !body.jobId) throw new Error(body.error ?? "Could not start source inspection");
+      setProbeJobId(body.jobId);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+      setProbeActive(false);
+    }
+  }
+
   const title = s.title ?? s.url ?? "Uploaded video";
 
   return (
@@ -74,7 +106,19 @@ export function SourceRow({ productId, source: s }: { productId: string; source:
           <span className="text-faint">{humanize(s.kind)}</span>
           <span className="text-faint" title={new Date(s.createdAt).toLocaleString()}>{formatRelative(s.createdAt)}</span>
         </p>
+        {editingRights && <div className="mt-3 flex flex-col gap-2 rounded border border-hairline p-3">
+          <label className="text-xs">Source rights<select className="ml-2 rounded border border-hairline bg-canvas p-1" value={rights} onChange={e => { setRights(e.target.value); setConfirmed(false); }} disabled={busy}>{Object.entries(RIGHTS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          {["licensed", "third_party_attested"].includes(rights) && <label className="text-xs">License or permission details<textarea className="mt-1 w-full rounded border border-hairline bg-canvas p-2" value={explanation} onChange={e => setExplanation(e.target.value)} maxLength={4000} disabled={busy} /></label>}
+          {rights !== "unknown" && <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} disabled={busy} />{rights === "owned" ? "I own this source and have rights to use it." : "I confirm this license or permission allows my use of the source."}</label>}
+          <div className="flex gap-2"><Button size="sm" onClick={saveRights} loading={busy} disabled={rights !== "unknown" && (!confirmed || (["licensed", "third_party_attested"].includes(rights) && explanation.trim().length < 10))}>Save rights</Button><Button size="sm" variant="ghost" onClick={() => setEditingRights(false)} disabled={busy}>Cancel</Button></div>
+        </div>}
+        {s.screening && <p className="mt-1 text-xs text-muted">{s.screening.status === "allowed" ? "Screened: no restricted content detected" : s.screening.status === "pending" ? "Current content checks are still required" : `Content blocked: ${s.screening.reason ?? "screening needs review"}`}</p>}
+        {s.screening && ["rejected", "uncertain"].includes(s.screening.status) && <a href="#source-topic" className="mt-1 inline-block text-xs underline">Find alternative videos</a>}
+        {s.qualification === "needs-rights" && s.rights === "unknown" && <p className="mt-1 text-xs text-muted">No reuse license verified. Confirm permission before content screening.</p>}
+        {s.qualification === "batch-limit" && s.screening?.status !== "allowed" && <p className="mt-1 text-xs text-muted">This search’s screening limit was reached. Generate clips to run this source through all checks.</p>}
+        {s.activeSourceJob && <JobProgress key={s.activeSourceJob.id} jobId={s.activeSourceJob.id} compact initial={s.activeSourceJob} />}
         {s.failureReason && <p className="mt-1 text-xs text-red-600">{s.failureReason}</p>}
+        {probeJobId && <JobProgress key={probeJobId} jobId={probeJobId} compact initial={{ status: "queued", progressPct: 0, currentStep: null, attempts: 0, error: null, result: null }} onDone={() => setProbeActive(false)} />}
         {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       </div>
       <div className="font-mono text-[13px] tabular-nums text-muted">{formatDuration(s.durationSec)}</div>
@@ -95,9 +139,11 @@ export function SourceRow({ productId, source: s }: { productId: string; source:
         )}
       </div>
       <div className="flex flex-col items-start gap-1 lg:items-end">
-        <Button size="sm" variant={runnable && !runActive ? "primary" : "secondary"} disabled={!runnable || Boolean(runActive)} loading={busy} onClick={run} title={why ?? undefined}>
+        <Button size="sm" variant={runnable && !runActive ? "primary" : "secondary"} disabled={!runnable || Boolean(runActive) || probeActive} loading={busy} onClick={run} title={why ?? undefined}>
           Generate clips
         </Button>
+        <Button size="sm" variant="ghost" disabled={busy || Boolean(runActive) || s.status === "downloading"} loading={probeActive} onClick={inspect}>Refresh metadata</Button>
+        <Button size="sm" variant="ghost" disabled={busy || probeActive || Boolean(runActive)} onClick={() => { setRights(s.rights); setConfirmed(false); setEditingRights(true); }}>Edit rights</Button>
         {why && <span className="text-[11px] text-faint">{why}</span>}
       </div>
     </li>

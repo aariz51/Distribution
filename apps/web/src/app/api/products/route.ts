@@ -1,3 +1,5 @@
+import { requestKey } from "@/lib/request-key";
+import { z } from "zod";
 import { ProductProfileInput } from "@distribution/core";
 import { requireSession } from "@/lib/auth";
 import { handler, json } from "@/lib/api";
@@ -10,7 +12,7 @@ export const GET = handler(async () => {
 
 export const POST = handler(async (req) => {
   const s = await requireSession();
-  const input = ProductProfileInput.parse(await req.json());
-  const product = await createProduct(s.accountId, input);
+  const { initialSources, ...input } = ProductProfileInput.extend({ initialSources: z.array(z.object({ url: z.url(), rights: z.enum(["owned", "licensed"]) })).max(25).default([]) }).parse(await req.json());
+  const product = await createProduct(s.accountId, input, initialSources, requestKey(req));
   return json({ product }, { status: 201 });
 });

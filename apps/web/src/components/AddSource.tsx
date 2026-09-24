@@ -61,6 +61,8 @@ export function AddSource({ productId }: { productId: string }) {
         r = await fetch(`/api/products/${productId}/sources`, { method: "POST", body: fd });
       }
       if (!r.ok) throw new Error(await readError(r));
+      const result = await r.json();
+      if (result.processing?.status === "failed") setError(result.processing.error);
       setUrl("");
       setFile(null);
       setAttested(false);
