@@ -6,16 +6,16 @@ export const metadata = {
 };
 
 const FILMS = [
-  { id: "vertical", label: "9:16 vertical", use: "Reels · TikTok · Shorts", src: "/demo/promo_vertical.mp4", poster: "/demo/poster-vertical.png", spec: "1080 × 1920 · 60fps · 24.0s", portrait: true },
-  { id: "landscape", label: "16:9 landscape", use: "YouTube · site hero", src: "/demo/promo_landscape.mp4", poster: "/demo/poster-landscape.png", spec: "1920 × 1080 · 60fps · 24.0s", portrait: false },
-  { id: "appstore", label: "App Store preview", use: "App Store · trimmed to Apple's rule", src: "/demo/promo_store_portrait-appstore.mp4", poster: "/demo/poster-vertical.png", spec: "886 × 1920 · 30fps · ≤30s", portrait: true },
+  { id: "vertical", label: "9:16 vertical", use: "Reels · TikTok · Shorts", src: "/demo/promo_vertical.mp4", poster: "/demo/poster-vertical.png", spec: "1080 × 1920 · 60fps · 15.0s", portrait: true },
+  { id: "landscape", label: "16:9 landscape", use: "YouTube · site hero", src: "/demo/promo_landscape.mp4", poster: "/demo/poster-landscape.png", spec: "1920 × 1080 · 60fps · 15.0s", portrait: false },
+  { id: "appstore", label: "App Store preview", use: "App Store · trimmed to Apple's rule", src: "/demo/promo_store_portrait-appstore.mp4", poster: "/demo/poster-vertical.png", spec: "886 × 1920 · 30fps · 15.0s", portrait: true },
 ];
 
 const FACTS: [string, string][] = [
-  ["Verified promo runs", "2"],
-  ["Exports per run", "6 videos"],
-  ["Branded source clips", "2"],
-  ["Clip covers verified", "6"],
+  ["Length", "15 s"],
+  ["Exports", "6 videos"],
+  ["Scenes", "9"],
+  ["Screenshots used", "None"],
 ];
 
 const PALETTE: [string, string][] = [
@@ -50,9 +50,9 @@ export default function DemoPage() {
           </p>
           <h1 className="max-w-[20ch] text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] sm:text-[48px]">What one product profile produced.</h1>
           <p className="mt-5 max-w-[62ch] text-[17px] leading-relaxed text-muted">
-            These files were generated from a single profile for <span className="text-ink">SafeChoice</span>, a shipped
-            product-label scanner, using its real logo and screenshots. These previews come from the verified 24-second
-            run. The full workflow also produced playable branded clips, covers and a clip with stock footage, sound effects and a female voice outro.
+            These files were generated from a single profile for <span className="text-ink">LabelWise</span>, a shipped
+            product-label scanner. The film was directed from its name, what it does and its logo, with no screenshots,
+            following a written motion-design brief. The same installation also cuts long videos into captioned, branded clips with covers.
           </p>
           <dl className="mt-10 grid gap-px overflow-hidden rounded-[10px] border border-hairline bg-hairline sm:grid-cols-4">
             {FACTS.map(([k, v]) => (
@@ -98,8 +98,8 @@ export default function DemoPage() {
         <section className="border-t border-hairline py-16">
           <h2 className="text-[24px] font-semibold tracking-[-0.02em]">It writes down its reasoning</h2>
           <p className="mt-2 max-w-[62ch] text-muted">
-            Every film ships with the direction that produced it: which structure was chosen and why, the palette and
-            where each colour lands, and a beat-by-beat storyboard. It is a document you can argue with.
+            Every film ships with the direction that produced it: the brief it followed, the concept, the assets it was
+            given and a beat-by-beat storyboard. It is a document you can argue with.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <a href="/demo/CREATIVE_DIRECTION.md" className="rounded-[8px] bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover">Read CREATIVE_DIRECTION.md</a>
@@ -123,9 +123,9 @@ pnpm install && pnpm --filter @distribution/db migrate
 pnpm --filter @distribution/web dev        # the app
 pnpm --filter @distribution/worker start   # the pipelines
 
-# configure providers and runtime dependencies as described in README.md;
-# then generate a promo from a saved profile:
-pnpm exec tsx scripts/run-promo.ts <productId> 24`}
+# configure providers and runtime dependencies as described in README.md,
+# then open http://localhost:3000, add your product and press
+# "Generate promo film".`}
           </pre>
         </section>
       </main>
@@ -133,7 +133,7 @@ pnpm exec tsx scripts/run-promo.ts <productId> 24`}
       <footer className="border-t border-hairline">
         <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center justify-between gap-4 px-6 py-8 text-[12px] text-faint">
           <span>Distribution</span>
-          <p>Real SafeChoice outputs · verified end to end.</p>
+          <p>Real LabelWise outputs · verified end to end.</p>
         </div>
       </footer>
     </div>

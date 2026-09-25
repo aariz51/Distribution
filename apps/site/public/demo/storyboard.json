@@ -3,92 +3,167 @@
     "fps": 60,
     "sfx": [
       {
-        "t": 0.15,
-        "vol": 0.7,
+        "t": 0,
+        "vol": 0.9,
         "effect": "pop"
       },
       {
-        "t": 2.9,
-        "vol": 0.55,
-        "effect": "whoosh"
+        "t": 0.39999999999999997,
+        "vol": 0.9,
+        "effect": "pop2"
       },
       {
-        "t": 3.9,
-        "vol": 0.8,
+        "t": 0.7999999999999999,
+        "vol": 0.9,
         "effect": "pop"
       },
       {
-        "t": 5.248,
-        "vol": 1,
-        "effect": "click"
-      },
-      {
-        "t": 5.311999999999999,
+        "t": 1.08,
         "vol": 0.6,
         "effect": "whoosh"
       },
       {
-        "t": 6.5,
-        "vol": 0.55,
-        "effect": "whoosh"
-      },
-      {
-        "t": 7.424,
-        "vol": 0.95,
-        "effect": "click"
-      },
-      {
-        "t": 7.680000000000001,
-        "vol": 0.7,
+        "t": 1.22,
+        "vol": 0.8,
         "effect": "pop"
       },
       {
-        "t": 9.7,
-        "vol": 0.7,
-        "effect": "drag"
-      },
-      {
-        "t": 11.2,
+        "t": 1.536,
         "vol": 0.5,
         "effect": "sparkle"
       },
       {
-        "t": 13.7,
-        "vol": 0.55,
+        "t": 2.16,
+        "vol": 0.85,
         "effect": "whoosh"
       },
       {
-        "t": 14.879999999999999,
-        "vol": 0.95,
-        "effect": "click"
-      },
-      {
-        "t": 15.2,
-        "vol": 0.7,
-        "effect": "pop"
-      },
-      {
-        "t": 17.650000000000002,
-        "vol": 0.8,
-        "effect": "pop"
-      },
-      {
-        "t": 18.32,
+        "t": 2.544,
         "vol": 0.8,
         "effect": "pop2"
       },
       {
-        "t": 18.92,
+        "t": 3.12,
+        "vol": 0.45,
+        "effect": "chime"
+      },
+      {
+        "t": 3.48,
+        "vol": 0.6,
+        "effect": "pop"
+      },
+      {
+        "t": 3.6,
+        "vol": 0.9,
+        "effect": "type"
+      },
+      {
+        "t": 3.8000000000000003,
+        "vol": 0.9,
+        "effect": "type"
+      },
+      {
+        "t": 4,
+        "vol": 0.9,
+        "effect": "type"
+      },
+      {
+        "t": 4.2,
+        "vol": 0.9,
+        "effect": "type"
+      },
+      {
+        "t": 4.88,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 5.1,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 5.4,
         "vol": 0.8,
         "effect": "pop"
       },
       {
-        "t": 20.2,
+        "t": 5.55,
+        "vol": 0.8,
+        "effect": "pop2"
+      },
+      {
+        "t": 6.88,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 7.3,
+        "vol": 0.8,
+        "effect": "pop"
+      },
+      {
+        "t": 8.564,
+        "vol": 1,
+        "effect": "click"
+      },
+      {
+        "t": 9.37,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 9.38,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 9.7,
         "vol": 0.75,
+        "effect": "pop"
+      },
+      {
+        "t": 9.87,
+        "vol": 0.75,
+        "effect": "pop2"
+      },
+      {
+        "t": 10.04,
+        "vol": 0.75,
+        "effect": "pop"
+      },
+      {
+        "t": 10.21,
+        "vol": 0.75,
+        "effect": "pop2"
+      },
+      {
+        "t": 11.3,
+        "vol": 0.8,
+        "effect": "pop"
+      },
+      {
+        "t": 11.4625,
+        "vol": 0.8,
+        "effect": "pop2"
+      },
+      {
+        "t": 11.625,
+        "vol": 0.8,
+        "effect": "pop"
+      },
+      {
+        "t": 12.48,
+        "vol": 0.6,
+        "effect": "whoosh"
+      },
+      {
+        "t": 12.75,
+        "vol": 0.78,
         "effect": "sparkle"
       },
       {
-        "t": 20.5,
+        "t": 13.1,
         "vol": 0.9,
         "effect": "chime"
       }
@@ -98,98 +173,119 @@
     "height": 1920,
     "scenes": [
       {
-        "id": "hook-1",
+        "id": "kinetic-1",
         "copy": {
-          "line": "Know what is really inside any product you buy",
-          "glyph": "?"
+          "w1": "What's",
+          "w2": "really",
+          "w3": "inside?",
+          "w4": "",
+          "w5": "",
+          "caption": "LabelWise"
         },
-        "kind": "hook",
+        "kind": "kinetic",
         "start": 0,
-        "duration": 168
+        "duration": 72,
+        "transition": "cut"
       },
       {
-        "id": "oneTap-2",
+        "id": "morph-2",
         "copy": {
-          "line1": "Know what is really inside",
-          "line2": "any product you buy",
-          "buttonLabel": "SCAN"
+          "word": "INSIDE",
+          "label": "LabelWise"
+        },
+        "kind": "morph",
+        "start": 72,
+        "accent": "#3d986a",
+        "duration": 144,
+        "transition": "iris"
+      },
+      {
+        "id": "typewriter-3",
+        "copy": {
+          "line": "Scan any product label",
+          "label": "labelwise"
+        },
+        "kind": "typewriter",
+        "start": 216,
+        "accent": "#10B981",
+        "options": {
+          "ground": "dark"
+        },
+        "duration": 84,
+        "transition": "flash"
+      },
+      {
+        "id": "features-4",
+        "copy": {
+          "f1": "What each one is",
+          "f2": "Why it matters",
+          "f3": "If it fits you",
+          "f1sub": "Read for you from the label",
+          "f2sub": "For the way you eat",
+          "f3sub": "Allergies, intolerances, avoidances",
+          "title": "Every ingredient,",
+          "titleAccent": "explained"
+        },
+        "kind": "features",
+        "start": 300,
+        "accent": "#10B981",
+        "duration": 120,
+        "transition": "slash"
+      },
+      {
+        "id": "oneTap-5",
+        "copy": {
+          "line1": "Scan the label.",
+          "line2": "Know what is inside.",
+          "buttonLabel": "Scan"
         },
         "kind": "oneTap",
-        "start": 168,
-        "duration": 120
+        "start": 420,
+        "duration": 72,
+        "transition": "push"
       },
       {
-        "id": "press-3",
+        "id": "press-6",
         "copy": {
-          "buttonLabel": "SCAN"
+          "buttonLabel": "Scan"
         },
         "kind": "press",
-        "start": 288,
-        "duration": 96
+        "start": 492,
+        "duration": 78,
+        "transition": "cut"
       },
       {
-        "id": "dashboard-4",
+        "id": "steps-7",
         "copy": {
-          "pre": "Know",
-          "chip": "Scan any product…",
-          "post": "is really inside any product you buy",
-          "accent": "what",
-          "chipSub": "health"
+          "s1": "Scan any product label",
+          "s2": "Know what is really inside",
+          "s3": "Ask your AI ingredient expert",
+          "s4": "Remember every product check",
+          "s1sub": "",
+          "s2sub": "",
+          "s3sub": "",
+          "s4sub": "",
+          "title": "What LabelWise does"
         },
-        "kind": "dashboard",
-        "start": 384,
-        "screens": [
-          "screen4"
-        ],
-        "duration": 192
+        "kind": "steps",
+        "start": 570,
+        "duration": 108,
+        "transition": "zoom"
       },
       {
-        "id": "orbit-5",
-        "copy": {
-          "titleRest": "you need.",
-          "titleAccent": "Everything"
-        },
-        "kind": "orbit",
-        "start": 576,
-        "screens": [
-          "screen5",
-          "screen6",
-          "screen1",
-          "screen2",
-          "screen3",
-          "screen4"
-        ],
-        "duration": 240
-      },
-      {
-        "id": "dashboard-6",
-        "copy": {
-          "pre": "Know",
-          "chip": "Scan any product…",
-          "post": "is really inside any product you buy",
-          "accent": "what",
-          "chipSub": "health"
-        },
-        "kind": "dashboard",
-        "start": 816,
-        "screens": [
-          "screen6"
-        ],
-        "duration": 240
-      },
-      {
-        "id": "tagline-7",
+        "id": "tagline-8",
         "copy": {
           "w1": "Scan.",
           "w2": "Know.",
-          "w3": "Ask."
+          "w3": "Choose."
         },
         "kind": "tagline",
-        "start": 1056,
-        "duration": 144
+        "start": 678,
+        "duration": 78,
+        "transition": "cut"
       },
       {
-        "id": "logo-8",
+        "id": "logo-9",
         "copy": {
           "badge1": "App Store",
           "badge2": "Google Play",
@@ -198,25 +294,19 @@
           "badge2Top": "GET IT ON"
         },
         "kind": "logo",
-        "start": 1200,
-        "duration": 240
+        "start": 756,
+        "duration": 144,
+        "transition": "iris"
       }
     ],
     "product": {
       "cta": "Download on the App Store & Google Play",
-      "name": "SafeChoice",
+      "name": "LabelWise",
       "tagline": "Know what is really inside any product you buy"
     },
-    "screens": {
-      "screen1": "app-screens/01-screen.png",
-      "screen2": "app-screens/02-screen.png",
-      "screen3": "app-screens/03-screen.png",
-      "screen4": "app-screens/04-screen.png",
-      "screen5": "app-screens/05-screen.png",
-      "screen6": "app-screens/06-screen.png"
-    },
+    "screens": {},
     "audioSrc": "audio/master.wav",
-    "durationFrames": 1440
+    "durationFrames": 900
   },
   "theme": {
     "fonts": {

@@ -77,3 +77,697 @@ input[type="color"]::-webkit-color-swatch {
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-soft);
 }
+
+/* ─── Landing ────────────────────────────────────────────────────────────────
+   One easing for everything that moves: a heavy spring settle. Loops run only
+   while their section is on screen ([data-inview]) and stop entirely under
+   prefers-reduced-motion, where every element shows its settled state. */
+:root {
+  --ease-settle: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.landing-ease {
+  transition-property: opacity, transform, visibility, background-color;
+  transition-timing-function: var(--ease-settle);
+}
+
+[data-reveal] {
+  transition: opacity 900ms var(--ease-settle), transform 900ms var(--ease-settle), filter 900ms var(--ease-settle);
+}
+[data-reveal="pending"] {
+  opacity: 0;
+  transform: translateY(64px);
+  filter: blur(12px);
+}
+
+.hero-heading {
+  background: linear-gradient(90deg, #000000 0%, #666666 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.landing-cta,
+.landing-cta-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 9999px;
+  background: var(--color-ink);
+  color: var(--color-canvas);
+  font-weight: 600;
+  transition: transform 500ms var(--ease-settle), background-color 200ms var(--ease-settle);
+}
+.landing-cta {
+  padding: 12px 24px;
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+.landing-cta-sm {
+  padding: 8px 16px;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+.landing-cta:hover,
+.landing-cta-sm:hover {
+  background: #000;
+  transform: translateY(-1px);
+}
+.landing-cta:active,
+.landing-cta-sm:active {
+  transform: scale(0.98);
+}
+
+/* Hero engine */
+.engine-rail {
+  fill: none;
+  stroke: var(--color-hairline-strong);
+  stroke-width: 1.5;
+}
+.engine-pulse {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-dasharray: 7 193;
+  stroke-dashoffset: 7;
+  opacity: 0;
+  animation: engine-travel 2.8s var(--ease-settle) infinite;
+}
+.engine-pulse-slow {
+  animation-duration: 3.6s;
+}
+@keyframes engine-travel {
+  0% { stroke-dashoffset: 7; opacity: 0; }
+  10% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { stroke-dashoffset: -100; opacity: 0; }
+}
+.engine-orbit {
+  fill: none;
+  stroke: var(--color-hairline-strong);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 9;
+}
+.engine-spin,
+.engine-spin-reverse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: engine-rotate 48s linear infinite;
+}
+.engine-spin-reverse {
+  animation-duration: 72s;
+  animation-direction: reverse;
+}
+@keyframes engine-rotate {
+  to { transform: rotate(360deg); }
+}
+.engine-ticker-item {
+  opacity: 0;
+  transform: translateY(100%);
+  animation: engine-ticker 16s var(--ease-settle) infinite;
+}
+/* Each stage holds for one 2 s slot of the 16 s cycle and hands over as the
+   next arrives, so the label is never empty. */
+@keyframes engine-ticker {
+  0% { opacity: 0; transform: translateY(100%); }
+  1.5% { opacity: 1; transform: translateY(0); }
+  12.5% { opacity: 1; transform: translateY(0); }
+  14% { opacity: 0; transform: translateY(-100%); }
+  100% { opacity: 0; transform: translateY(-100%); }
+}
+.engine-blip {
+  animation: engine-blip 5s ease-out infinite;
+}
+@keyframes engine-blip {
+  0% { box-shadow: 0 0 0 0 rgb(15 110 86 / 0.45); }
+  14% { box-shadow: 0 0 0 14px rgb(15 110 86 / 0); }
+  100% { box-shadow: 0 0 0 14px rgb(15 110 86 / 0); }
+}
+.engine-drop {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-hairline-strong);
+}
+.engine-drop::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  width: 5px;
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  animation: engine-drip 1.6s var(--ease-settle) infinite;
+}
+@keyframes engine-drip {
+  from { top: -10px; }
+  to { top: 100%; }
+}
+
+/* Tagline: muted until each word crosses the trigger line. Without the
+   script (no data-armed) the words simply render in full ink. */
+.tagline-word {
+  transition: color 700ms var(--ease-settle);
+}
+.tagline-reveal[data-armed] .tagline-word {
+  color: rgb(20 23 26 / 0.28);
+}
+.tagline-reveal[data-armed] .tagline-word[data-lit="true"] {
+  color: var(--color-ink);
+}
+
+/* Section loops: storyboard, waveform scan, orbit, calendar. */
+.playhead {
+  animation: playhead 9s linear infinite;
+}
+@keyframes playhead {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--travel, 100%)); }
+}
+[data-armed] .moment {
+  opacity: 0;
+  transform: translateY(8px);
+}
+[data-seen="true"] .moment {
+  animation: moment-in 700ms var(--ease-settle) forwards;
+  animation-delay: var(--at, 0ms);
+}
+@keyframes moment-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+.wave-bar {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wave 1.8s ease-in-out infinite alternate;
+}
+@keyframes wave {
+  from { transform: scaleY(0.55); }
+  to { transform: scaleY(1); }
+}
+
+.scene-fill {
+  transform-origin: left;
+}
+[data-armed] .scene-fill {
+  transform: scaleX(0);
+}
+[data-seen="true"] .scene-fill {
+  animation: scene-fill 900ms var(--ease-settle) forwards;
+  animation-delay: var(--at, 0ms);
+}
+@keyframes scene-fill {
+  to { transform: scaleX(1); }
+}
+
+.orbit-ring {
+  animation: engine-rotate 60s linear infinite;
+}
+.orbit-ring .orbit-upright {
+  animation: engine-rotate 60s linear infinite reverse;
+}
+.orbit-wave {
+  animation: orbit-wave 4s var(--ease-settle) infinite;
+}
+@keyframes orbit-wave {
+  from { transform: scale(0.35); opacity: 0.55; }
+  to { transform: scale(1.25); opacity: 0; }
+}
+
+[data-armed] .slot {
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+}
+[data-seen="true"] .slot {
+  animation: slot-in 700ms var(--ease-settle) forwards;
+  animation-delay: var(--at, 0ms);
+}
+@keyframes slot-in {
+  to { opacity: 1; transform: none; }
+}
+
+.bar-grow {
+  transform-origin: left;
+}
+[data-armed] .bar-grow {
+  transform: scaleX(0);
+}
+[data-seen="true"] .bar-grow {
+  animation: scene-fill 2.4s var(--ease-settle) forwards;
+  animation-delay: var(--at, 0ms);
+}
+
+[data-inview="false"] *,
+[data-inview="false"] *::before,
+[data-inview="false"] *::after {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] { transition: none; }
+  .engine-pulse, .engine-drop::after, .orbit-wave { display: none; }
+  .engine-spin, .engine-spin-reverse, .engine-blip, .orbit-ring, .orbit-ring .orbit-upright, .playhead, .wave-bar { animation: none; }
+  .engine-ticker-item { animation: none; opacity: 0; }
+  .engine-ticker-item:first-child { opacity: 1; transform: none; }
+  .moment, .slot { animation: none !important; opacity: 1; transform: none; }
+  .scene-fill, .bar-grow { animation: none !important; transform: none; }
+  .landing-cta, .landing-cta-sm { transition: none; }
+}
+
+/* ─── Landing, second pass ───────────────────────────────────────────────── */
+
+/* Hero: each line rises out of its own mask on load. Pure CSS with fill-mode
+   both, so without JS it still plays, and under reduced motion it is simply
+   there. */
+/* One clock for the whole hero: eyebrow 200ms, headline 400/540ms, copy
+   650ms, actions 850ms; the engine assembles from 200ms to about 1.2s. */
+.hero-line {
+  animation: hero-rise 1100ms var(--ease-settle) both;
+  animation-delay: var(--d, 0ms);
+}
+.hero-seq {
+  animation: hero-fade 900ms var(--ease-settle) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes hero-fade {
+  from { opacity: 0; transform: translateY(12px); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.engine-in {
+  animation: engine-in 900ms var(--ease-settle) both;
+  animation-delay: var(--d, 0ms);
+}
+.engine-in-tilt {
+  --tilt: -3deg;
+  transform: rotate(var(--tilt));
+  animation-name: engine-in-tilt;
+}
+@keyframes engine-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes engine-in-tilt {
+  from { opacity: 0; transform: translateY(14px) rotate(0deg) scale(0.97); }
+  to { opacity: 1; transform: rotate(var(--tilt)); }
+}
+.engine-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: engine-draw 1000ms var(--ease-settle) forwards;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes engine-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(0.45em); clip-path: inset(0 0 100% 0); filter: blur(6px); }
+  to { opacity: 1; transform: none; clip-path: inset(0 0 -20% 0); filter: none; }
+}
+
+/* A soft light that follows the pointer across the engine's routes. */
+.engine-light {
+  opacity: 0;
+  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgb(15 110 86 / 0.12), transparent 22%);
+  transition: opacity 500ms var(--ease-settle);
+}
+.engine-motion[data-lit="true"] .engine-light {
+  opacity: 1;
+}
+.engine-motion[data-still="true"] .engine-packet {
+  display: none;
+}
+
+/* Nav: a hairline that fills as the page is read (scroll-driven where supported). */
+.nav-progress {
+  transform-origin: left;
+  transform: scaleX(0);
+}
+@supports (animation-timeline: scroll()) {
+  .nav-progress {
+    animation: nav-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+}
+@keyframes nav-progress {
+  to { transform: scaleX(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-line, .hero-seq, .engine-in { animation: none; }
+  .engine-draw { animation: none; stroke-dashoffset: 0; }
+  .engine-packet { display: none; }
+  .nav-progress { animation: none; transform: scaleX(0); }
+}
+
+/* Untangle: pinned while the knot straightens (only once the script arms it). */
+.untangle-track[data-armed] {
+  height: 280vh;
+}
+.untangle-track[data-armed] .untangle-stage {
+  position: sticky;
+  top: 0;
+  min-height: 100dvh;
+}
+.untangle-dot {
+  fill: var(--color-ink);
+  stroke: #6f7670;
+  stroke-width: 2;
+  transition: fill 400ms var(--ease-settle), stroke 400ms var(--ease-settle);
+}
+.untangle-check {
+  stroke: var(--color-ink);
+  stroke-dasharray: 14;
+  stroke-dashoffset: 14;
+  transition: stroke-dashoffset 450ms var(--ease-settle) 120ms;
+}
+.untangle-label {
+  fill: #8d948e;
+  transition: fill 400ms var(--ease-settle);
+}
+.untangle-node[data-done="true"] .untangle-dot {
+  fill: #8fd3bb;
+  stroke: #8fd3bb;
+}
+.untangle-node[data-done="true"] .untangle-check {
+  stroke-dashoffset: 0;
+}
+.untangle-node[data-done="true"] .untangle-label {
+  fill: var(--color-canvas);
+}
+.untangle-pulse {
+  stroke: #8fd3bb;
+  stroke-dasharray: 6 194;
+  stroke-dashoffset: 6;
+  opacity: 0;
+}
+.untangle-track[data-solved="true"] .untangle-pulse {
+  animation: engine-travel 2.8s var(--ease-settle) infinite;
+}
+.untangle-solved {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 600ms var(--ease-settle), transform 600ms var(--ease-settle);
+}
+.untangle-track[data-solved="true"] .untangle-solved {
+  opacity: 1;
+  transform: none;
+}
+.untangle-item-dot {
+  color: transparent;
+  transition: background-color 400ms var(--ease-settle), border-color 400ms var(--ease-settle), color 400ms var(--ease-settle);
+}
+.untangle-item[data-done="true"] .untangle-item-dot {
+  background: #8fd3bb;
+  border-color: #8fd3bb;
+  color: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .untangle-track[data-solved="true"] .untangle-pulse { animation: none; }
+}
+
+/* Crop lab: one registered property drives both the crop window over the
+   source and the vertical result's framing, so they can never drift apart. */
+@property --cx {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0.5;
+}
+.crop-lab {
+  --cx: 0.5;
+}
+.crop-lab[data-running="true"] {
+  animation: crop-pan 12.6s ease-in-out infinite;
+}
+@keyframes crop-pan {
+  0% { --cx: 0.5; }
+  22% { --cx: 0.12; }
+  46% { --cx: 0.68; }
+  70% { --cx: 0.94; }
+  88% { --cx: 0.34; }
+  100% { --cx: 0.5; }
+}
+.crop-window {
+  width: 69.35%; /* 720 × 9/16 of a 584-wide source */
+  left: calc(var(--cx) * 30.65%);
+  box-shadow: 0 0 0 9999px rgb(10 12 14 / 0.62);
+  outline: 1px solid rgb(143 211 187 / 0.55);
+}
+.crop-result {
+  background-size: auto 100%;
+  background-position: calc(var(--cx) * 100%) center;
+}
+.caption-title,
+.caption-word {
+  -webkit-text-stroke: 6px #0b0d0f;
+  paint-order: stroke fill;
+  color: #fff;
+}
+.caption-word {
+  transition: background-color 120ms linear, transform 180ms var(--ease-settle);
+}
+.caption-word-active {
+  background: #3d986a;
+  transform: scale(1.07);
+}
+.crop-arrow {
+  stroke-dasharray: 4 6;
+  animation: dash-flow 900ms linear infinite;
+}
+@keyframes dash-flow {
+  to { stroke-dashoffset: -10; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .crop-lab[data-running="true"], .crop-arrow { animation: none; }
+}
+
+/* Cover fan: a held hand of cards that spreads when you reach for it.
+   Positions are fractions of the row, so spread cards never overlap. */
+.fan-card {
+  left: var(--rest);
+  transform: rotate(var(--rot)) translateY(calc(var(--rot) * var(--rot) * 0.4px));
+  transform-origin: 50% 120%;
+  transition: left 700ms var(--ease-settle), transform 700ms var(--ease-settle);
+}
+.fan-tag {
+  opacity: 0;
+  transition: opacity 400ms var(--ease-settle);
+}
+.cover-fan:hover .fan-card,
+.cover-fan:focus-within .fan-card {
+  left: var(--spread);
+  transform: none;
+}
+.cover-fan:hover .fan-tag,
+.cover-fan:focus-within .fan-tag {
+  opacity: 1;
+}
+.cover-fan .fan-card:hover,
+.cover-fan .fan-card:focus-within {
+  z-index: 5 !important;
+}
+.cover-fan button {
+  transition: transform 500ms var(--ease-settle);
+}
+.cover-fan .fan-card:hover button,
+.cover-fan .fan-card:focus-within button {
+  transform: translateY(-10px);
+}
+@media (hover: none) {
+  .fan-card { left: var(--spread); transform: none; }
+  .fan-tag { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fan-card, .cover-fan button { transition: none; }
+}
+
+/* Publish: approved clip dragged from the tray onto Wednesday (plays once).
+   Geometry: seven equal columns with 6px gaps under a 64px tray. */
+.drag-stage {
+  --col: calc((100% - 36px) / 7);
+}
+.drag-pointer {
+  opacity: 0;
+}
+/* Resting state (no script, reduced motion, after the story): on Wednesday. */
+.drag-card {
+  width: var(--col);
+  left: calc(2 * (var(--col) + 6px) + 4px);
+  top: 106px;
+}
+
+/* Final CTA: a lamp over a hidden wall of real covers. */
+.spotlight {
+  --sx: 50%;
+  --sy: 50%;
+}
+.spotlight-wall {
+  opacity: 0.9;
+  -webkit-mask-image: radial-gradient(circle 190px at var(--sx) var(--sy), #000 0%, rgb(0 0 0 / 0.45) 45%, transparent 100%);
+  mask-image: radial-gradient(circle 190px at var(--sx) var(--sy), #000 0%, rgb(0 0 0 / 0.45) 45%, transparent 100%);
+  transform: rotate(-4deg) scale(1.06);
+}
+/* Keeps the headline readable wherever the lamp is. */
+.spotlight-scrim {
+  background: radial-gradient(ellipse 46% 42% at 50% 50%, rgb(20 23 26 / 0.86), rgb(20 23 26 / 0.35) 70%, transparent);
+}
+.spotlight-cta {
+  transition: transform 500ms var(--ease-settle), background-color 200ms var(--ease-settle);
+}
+.spotlight-cta:hover {
+  background: #fff;
+}
+.spotlight-cta:active {
+  scale: 0.98;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spotlight-cta { transition: none; }
+}
+
+/* Footer: the wordmark drawn as one long stroke, then filled. */
+.wordmark-draw {
+  stroke-dasharray: 1600;
+  stroke-dashoffset: 1600;
+  fill: transparent;
+}
+[data-seen="true"] .wordmark-draw {
+  animation: wordmark-draw 2.6s var(--ease-settle) forwards;
+}
+.footer-mark:not([data-armed]) .wordmark-draw {
+  stroke-dashoffset: 0;
+  fill: var(--color-hairline);
+}
+@keyframes wordmark-draw {
+  70% { stroke-dashoffset: 0; fill: transparent; }
+  100% { stroke-dashoffset: 0; fill: var(--color-hairline); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wordmark-draw { stroke-dashoffset: 0; fill: var(--color-hairline); animation: none !important; }
+}
+
+/* Tagline feed: faded top and bottom so it reads as an endless scroll. */
+.feed-stream {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+}
+
+/* FAQ answers slide open where the browser can animate to auto height. */
+@supports (interpolate-size: allow-keywords) {
+  .faq-list {
+    interpolate-size: allow-keywords;
+  }
+  .faq-list details::details-content {
+    height: 0;
+    overflow: clip;
+    transition: height 500ms var(--ease-settle), content-visibility 500ms allow-discrete;
+  }
+  .faq-list details[open]::details-content {
+    height: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .faq-list details::details-content { transition: none; }
+}
+
+/* Entrances always complete, even before (or without) the in-view script:
+   only loops are paused off screen. */
+[data-inview="false"] .engine-in,
+[data-inview="false"] .engine-draw {
+  animation-play-state: running !important;
+}
+
+/* Nav: weightless over the hero, a surface once the page moves. */
+.landing-nav {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  transition: background-color 500ms var(--ease-settle), border-color 500ms var(--ease-settle), box-shadow 500ms var(--ease-settle), max-width 700ms var(--ease-settle);
+}
+.landing-nav[data-scrolled="true"] {
+  background: rgb(255 255 255 / 0.78);
+  border-color: var(--color-hairline);
+  box-shadow: 0 1px 2px rgb(20 23 26 / 0.05), 0 8px 24px rgb(20 23 26 / 0.06);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+}
+
+/* ─── Restraint pass: stories play once; only the hero and demos loop. ───── */
+.untangle-track[data-solved="true"] .untangle-pulse {
+  animation-iteration-count: 1;
+}
+.wave-bar,
+.crop-arrow,
+.orbit-ring,
+.orbit-ring .orbit-upright,
+.engine-drop::after {
+  animation: none !important;
+}
+.engine-drop::after {
+  display: none;
+}
+.playhead {
+  animation: none;
+  transform: translateX(0);
+}
+[data-seen="true"] .playhead {
+  animation: playhead 9s var(--ease-settle) 1 forwards;
+}
+.orbit-wave {
+  animation-iteration-count: 1;
+  animation-fill-mode: both;
+}
+/* Spokes from "Approved" to each channel, drawn once. */
+.orbit-spoke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+[data-armed] .orbit-spoke {
+  stroke-dashoffset: 1;
+}
+[data-seen="true"] .orbit-spoke {
+  animation: engine-draw 900ms var(--ease-settle) forwards;
+  animation-delay: var(--d, 0ms);
+}
+/* The drag plays once on arrival and rests with the post scheduled. */
+[data-armed]:not([data-seen="true"]) .drag-card {
+  opacity: 0;
+}
+[data-armed] .drag-card,
+[data-armed] .drag-pointer {
+  animation: none;
+}
+[data-armed][data-seen="true"] .drag-card {
+  animation: drag-card-once 4.8s var(--ease-settle) 400ms 1 both;
+}
+[data-armed][data-seen="true"] .drag-pointer {
+  animation: drag-pointer-once 4.8s var(--ease-settle) 400ms 1 both;
+}
+@keyframes drag-card-once {
+  0%, 10% { opacity: 0; left: 8px; top: 6px; transform: scale(0.6); }
+  18% { opacity: 1; left: 8px; top: 6px; transform: scale(1.06) rotate(-3deg); box-shadow: 0 16px 32px rgb(20 23 26 / 0.22); }
+  56% { opacity: 1; left: calc(2 * (var(--col) + 6px) + 4px); top: 106px; transform: scale(1.06) rotate(2deg); box-shadow: 0 16px 32px rgb(20 23 26 / 0.22); }
+  66%, 100% { opacity: 1; left: calc(2 * (var(--col) + 6px) + 4px); top: 106px; transform: none; box-shadow: none; }
+}
+@keyframes drag-pointer-once {
+  0% { opacity: 0; left: 55%; top: 90px; }
+  10% { opacity: 1; left: 34px; top: 34px; transform: scale(1); }
+  16% { left: 34px; top: 34px; transform: scale(0.85); }
+  56% { left: calc(2 * (var(--col) + 6px) + var(--col) * 0.5); top: 140px; transform: scale(0.85); opacity: 1; }
+  64% { left: calc(2 * (var(--col) + 6px) + var(--col) * 0.5); top: 140px; transform: scale(1); opacity: 1; }
+  82%, 100% { left: 70%; top: 220px; opacity: 0; }
+}
+
+/* Hero stage: dot grid, vignetted to the engine, first thing to appear. */
+.engine-stage {
+  background-image: radial-gradient(circle, rgb(20 23 26 / 0.16) 1px, transparent 1.4px);
+  background-size: 24px 24px;
+  background-position: 12px 12px;
+  -webkit-mask-image: radial-gradient(ellipse 60% 55% at 50% 50%, #000 30%, transparent 75%);
+  mask-image: radial-gradient(ellipse 60% 55% at 50% 50%, #000 30%, transparent 75%);
+  animation: hero-fade 1200ms var(--ease-settle) both;
+}
+[data-inview="false"] .engine-stage {
+  animation-play-state: running !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .engine-stage { animation: none; }
+}
