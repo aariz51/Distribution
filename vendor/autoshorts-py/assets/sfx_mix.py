@@ -78,6 +78,21 @@ def log(msg: str) -> None:
     print(f"[sfx] {msg}", file=sys.stderr, flush=True)
 
 
+def parse_windows(spec: str) -> list[tuple[float, float]]:
+    """ "1.4-2.9,20-21.5" -> [(1.4, 2.9), (20.0, 21.5)]; malformed parts are errors."""
+    windows = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        start, _, end = part.partition("-")
+        a, b = float(start), float(end)
+        if not (0 <= a < b):
+            raise SystemExit(f"bad exclude window: {part}")
+        windows.append((a, b))
+    return windows
+
+
 def duration_of(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -178,6 +193,12 @@ def main() -> int:
     ap.add_argument("--transcript")
     ap.add_argument("--output", required=True)
     ap.add_argument("--dry-run", action="store_true")
+    # Windows (seconds, "start-end,start-end") that must stay free of effects.
+    # Used when content screening flags an effect as music: the clip is rebuilt
+    # without whatever effect sat under the flagged audio.
+    ap.add_argument("--exclude", default="")
+    # Where to write the effects actually placed, with their real lengths.
+    ap.add_argument("--plan-json")
     args = ap.parse_args()
 
     video = Path(args.video).expanduser().resolve()
@@ -215,6 +236,27 @@ def main() -> int:
             log(f"no sound available for {name}, skipping")
     if not available:
         raise SystemExit("no effect files found in the kit")
+
+    excluded = parse_windows(args.exclude)
+    placed = []
+    for at, name, path in available:
+        end = at + duration_of(path)
+        if any(at < w_end and end > w_start for w_start, w_end in excluded):
+            log(f"dropped {name} at {at:.2f}s: overlaps a window flagged by screening")
+            continue
+        placed.append((at, name, path, end))
+    available = [(at, name, path) for at, name, path, _ in placed]
+
+    if args.plan_json:
+        Path(args.plan_json).write_text(json.dumps({"placements": [
+            {"at": round(at, 3), "end": round(end, 3), "effect": name, "file": path.name} for at, name, path, end in placed]}))
+
+    if not available:
+        log("every effect was excluded; copying through")
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", str(video), "-c", "copy", args.output], check=True)
+        print(args.output)
+        return 0
 
     for at, name, _ in available:
         log(f"{name:10s} at {at:6.2f}s")

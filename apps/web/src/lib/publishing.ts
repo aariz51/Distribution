@@ -1,6 +1,7 @@
 import { youtubeCover } from "@distribution/pipelines/publishing-cover";
 import { canTransition, newId, PipelineError, ValidationError } from "@distribution/core";
-import { PostizClient, decryptSecret, encryptSecret, platformOf, type Integration } from "@distribution/publishing";
+import { CONNECTABLE_PROVIDERS, DEFAULT_API_URL, PostizClient, decryptSecret, encryptSecret, platformOf, type Integration } from "@distribution/publishing";
+import { isOwnerAccount } from "./auth";
 import { and, asc, assetCopy, assets, db, desc, eq, inArray, jobs, postizConnections, products, publishSchedule, sql } from "./db";
 import { getQueue } from "./queue";
 import { NotFound } from "./api";
@@ -45,38 +46,83 @@ export async function listConnections(accountId: string): Promise<ConnectionView
 }
 
 /**
- * The founder's Postiz connection. If none is stored and POSTIZ_API_KEY is in
- * the environment, it is adopted once and stored encrypted, so the key stops
- * living only in a process env.
+ * The workspace's Postiz connection. Only the operator's own workspace may
+ * adopt POSTIZ_API_KEY from the environment (stored encrypted, once); any other
+ * workspace connects its own Postiz organisation, so nobody can publish to the
+ * operator's channels.
  */
 export async function getOrCreateConnection(accountId: string): Promise<ConnectionView | null> {
   const existing = await listConnections(accountId);
   if (existing.length > 0) return existing[0]!;
   const envKey = process.env.POSTIZ_API_KEY;
-  if (!envKey) return null;
+  if (!envKey || !(await isOwnerAccount(accountId))) return null;
   const id = newId();
   await db.insert(postizConnections).values({
     id,
     accountId,
     label: "Default",
-    apiUrl: process.env.POSTIZ_API_URL ?? "https://api.postiz.com/public/v1",
+    apiUrl: process.env.POSTIZ_API_URL ?? DEFAULT_API_URL,
     apiKeyEnc: encryptSecret(envKey, appSecret()),
     channels: [],
   });
   return (await listConnections(accountId))[0]!;
 }
 
+/**
+ * Hosts a workspace may point its connection at. Postiz cloud by default; a
+ * self-hosted Postiz is added through POSTIZ_ALLOWED_HOSTS. Without this the
+ * server would make authenticated requests to any address a user typed.
+ */
+export function assertAllowedPostizUrl(apiUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(apiUrl);
+  } catch {
+    throw new ValidationError("That Postiz address is not a valid URL.");
+  }
+  const allowed = new Set(["api.postiz.com", ...(process.env.POSTIZ_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+  if (!allowed.has(url.hostname.toLowerCase())) throw new ValidationError(`Postiz at ${url.hostname} is not allowed on this installation.`);
+  if (url.protocol !== "https:" && url.hostname === "api.postiz.com") throw new ValidationError("Postiz cloud must be reached over https.");
+  return url.toString().replace(/\/$/, "");
+}
+
+/** Checks the key against Postiz before storing it, and caches its channels. */
 export async function createConnection(accountId: string, input: { label: string; apiUrl?: string; apiKey: string }): Promise<ConnectionView> {
+  const apiUrl = assertAllowedPostizUrl(input.apiUrl || process.env.POSTIZ_API_URL || DEFAULT_API_URL);
+  const apiKey = input.apiKey.trim();
+  let integrations: Integration[];
+  try {
+    integrations = await new PostizClient({ apiUrl, apiKey }).listIntegrations(AbortSignal.timeout(20_000));
+  } catch {
+    throw new ValidationError("Postiz did not accept that API key. Copy it again from Postiz → Settings → Public API.");
+  }
   const id = newId();
   await db.insert(postizConnections).values({
     id,
     accountId,
     label: input.label,
-    apiUrl: input.apiUrl || "https://api.postiz.com/public/v1",
-    apiKeyEnc: encryptSecret(input.apiKey, appSecret()),
-    channels: [],
+    apiUrl,
+    apiKeyEnc: encryptSecret(apiKey, appSecret()),
+    channels: integrations,
+    checkedAt: sql`now()`,
   });
   return (await listConnections(accountId)).find((c) => c.id === id)!;
+}
+
+/** The provider's sign-in page for adding (or reconnecting) a channel. */
+export async function channelConnectUrl(accountId: string, provider: string, refresh?: string): Promise<string> {
+  if (!CONNECTABLE_PROVIDERS.some((p) => p.id === provider)) throw new ValidationError(`Unsupported channel type: ${provider}`);
+  const { client } = await clientFor(accountId);
+  return client.connectUrl(provider, { refresh, signal: AbortSignal.timeout(20_000) });
+}
+
+/** Removes a channel from the workspace's Postiz organisation and the cache. */
+export async function removeChannel(accountId: string, channelId: string): Promise<ChannelView[]> {
+  const channels = await listChannels(accountId);
+  if (!channels.some((c) => c.id === channelId)) throw new NotFound("channel");
+  const { client } = await clientFor(accountId);
+  await client.deleteIntegration(channelId, AbortSignal.timeout(20_000));
+  return refreshChannels(accountId);
 }
 
 export async function clientFor(accountId: string, connectionId?: string): Promise<{ client: PostizClient; connectionId: string }> {

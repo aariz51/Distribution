@@ -1,6 +1,6 @@
 import { withProviderSpend } from "@distribution/core/provider-budget";
 import type { CallContext, ChatMessage, ChatProvider, ChatRequest, ChatResponse, ContentPart, ProviderId } from "../types";
-import { postJsonWithRetry } from "../policy";
+import { MAX_ATTEMPTS, postJsonWithRetry } from "../policy";
 import { estimateChatUsd, reserveChatUsd } from "../pricing";
 
 interface OaiChoice { message?: { content?: string | { type: string; text?: string }[] } }
@@ -37,7 +37,7 @@ export class OpenAICompatibleProvider implements ChatProvider {
   }
 
   async chat(req: ChatRequest, model: string, ctx: CallContext): Promise<ChatResponse> {
-    return withProviderSpend(reserveChatUsd(model, req, Math.min(req.maxTokens, ctx.maxOutputTokens ?? req.maxTokens), 5, this.id === "ollama"), () => this.chatReserved(req, model, ctx));
+    return withProviderSpend(reserveChatUsd(model, req, Math.min(req.maxTokens, ctx.maxOutputTokens ?? req.maxTokens), ctx.maxAttempts ?? MAX_ATTEMPTS, this.id === "ollama"), () => this.chatReserved(req, model, ctx));
   }
 
   private async chatReserved(req: ChatRequest, model: string, ctx: CallContext): Promise<ChatResponse> {
@@ -54,6 +54,7 @@ export class OpenAICompatibleProvider implements ChatProvider {
     if (key) headers.authorization = `Bearer ${key}`;
 
     const { data, attempts } = await postJsonWithRetry<OaiResponse>({
+      maxAttempts: ctx.maxAttempts,
       url: `${this.cfg.baseUrl.replace(/\/$/, "")}/chat/completions`,
       headers,
       body,

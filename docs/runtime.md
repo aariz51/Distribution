@@ -19,7 +19,7 @@ Install FFmpeg/FFprobe and ensure they are on PATH. The Python environment suppl
 
 Source and finished-clip screening additionally requires the isolated Python3.11 environment above and the pinned model downloads. Keep that environment separate: its TensorFlow/OpenCV/NumPy versions differ from the media sidecars. Set `SCREENING_PYTHON_BIN` to its absolute interpreter path if it is not at the workspace default `.venv-screen/bin/python`. Persist the model caches, or set `SCREENING_MODEL_DIR` and `SCREENING_VISUAL_MODEL_DIR` to persistent locations before setup and in both application processes. Missing models block clipping; they are not optional. See `vendor/screening/README.md` for the policy and model provenance.
 
-Set `DATABASE_URL`, `APP_SECRET` and `APP_PASSWORD` before starting. Never commit `.env`. Export `DATABASE_URL` into the migration command's environment through your secret manager; migrations do not load `.env` automatically. Back up the database and storage before upgrading.
+Set `DATABASE_URL`, `APP_SECRET` and `APP_PASSWORD` before starting, and run migrations (`pnpm --filter @distribution/db migrate`), which include `0003_workspace_owner`. Never commit `.env`. Export `DATABASE_URL` into the migration command's environment through your secret manager; migrations do not load `.env` automatically. Back up the database and storage before upgrading.
 
 ```sh
 pnpm --filter @distribution/db migrate
@@ -36,6 +36,18 @@ WORKER_QUEUES=light,media,llm,render pnpm --filter @distribution/worker start
 The example intentionally runs video generation queues. Add the `publish` queue when the operator has configured Postiz and intends to execute approved schedules. Without `WORKER_QUEUES`, the worker polls every queue, including publishing. Use a process supervisor to restart crashed services and deliver SIGTERM for graceful shutdown. Termination grace must accommodate active job cleanup; do not assume cancelling a UI job means its subprocess has already exited.
 
 For a small host, start with `WORKER_MEDIA_CONCURRENCY=1`, `WORKER_RENDER_CONCURRENCY=1`, and `WORKER_LLM_CONCURRENCY=1`. Size scratch/storage capacity for concurrent input copies, intermediate renders and final outputs. Current disk preflight thresholds are minimums, not capacity planning. The QA host recently hit the render free-space guard at about 2 GiB available.
+
+## Workspaces and sign-up
+
+Anyone can create a workspace at `/signup` (set `SIGNUPS=closed` to make the installation invite only). Each workspace is separate: products, media, jobs, channels and usage belong to it alone.
+
+- **Sign-in** checks each user's own argon2 hash. `APP_PASSWORD` only creates the owner workspace and its first user on a fresh database; once an owner exists it grants nothing.
+- **Owner workspace** (`accounts.is_owner`) is the only one that adopts `POSTIZ_API_KEY` from the environment. Every other workspace pastes its own Postiz key on `/channels`; the key is checked against Postiz before it is stored encrypted.
+- **Channels** are added from `/channels` with each platform's own sign-in (Postiz `GET /public/v1/social/:provider`). The OAuth callback lands on Postiz, so the page polls for the new channel.
+- **Spending**: signed-up workspaces share a monthly AI cap (`DEFAULT_ACCOUNT_MONTHLY_USD`, default 10) across all their products, on top of the per-product cap. Override per workspace with a `limits` row: `scope='account'`, `scope_id=<account id>`, `key='usd_month'`.
+- **Attempt limits** on sign-in and sign-up live in the web process's memory. Run one web process, or move them to shared storage before scaling out.
+
+Verify a deployment with `pnpm exec tsx scripts/test-workspaces.ts` (set `APP_URL`); it creates and removes throwaway workspaces.
 
 ## Before exposing the service
 

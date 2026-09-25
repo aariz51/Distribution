@@ -117,10 +117,12 @@ export async function ensureSfxKit(kitDir: string, opts: SidecarOptions = {}): P
   return kitDir;
 }
 
-export async function runSfxMix(video: string, kitDirs: string[], output: string, opts: SidecarOptions & { transcriptJson?: string; scenes?: string } = {}): Promise<string> {
+export async function runSfxMix(video: string, kitDirs: string[], output: string, opts: SidecarOptions & { transcriptJson?: string; scenes?: string; exclude?: Array<[number, number]>; planJson?: string } = {}): Promise<string> {
   const args = ["--video", video, "--kit", kitDirs.join(","), "--output", output];
   if (opts.scenes) args.push("--scenes", opts.scenes);
   if (opts.transcriptJson) args.push("--transcript", opts.transcriptJson);
+  if (opts.exclude?.length) args.push("--exclude", opts.exclude.map(([a, b]) => `${a.toFixed(3)}-${b.toFixed(3)}`).join(","));
+  if (opts.planJson) args.push("--plan-json", opts.planJson);
   const { lastLine } = await runSidecar("sfx_mix.py", args, { ...opts, step: "sfx", timeoutMs: opts.timeoutMs ?? 20 * 60_000 });
   return outputPath(lastLine, output, "sfx");
 }

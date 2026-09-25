@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Button, Card, CardBody, CardHeader, Checkbox, EmptyState, Field, Pill, Select, TextInput } from "@/components/ui";
+import { Button, ButtonLink, Card, CardBody, CardHeader, Checkbox, EmptyState, Field, Pill, Select, TextInput } from "@/components/ui";
+import { PlatformIcon, platformColor } from "@/components/PlatformIcon";
 import { formatDateTime, formatRelative, typeLabel } from "@/components/ui/format";
 
 export interface Channel {
@@ -48,71 +49,34 @@ async function post(url: string, body?: unknown): Promise<Record<string, unknown
 
 /** Connected Postiz channels. Refresh is explicit — it is the only call that hits the provider. */
 export function ChannelsCard({ channels, hasConnection }: { channels: Channel[]; hasConnection: boolean }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState("");
-
-  async function refresh() {
-    setBusy(true);
-    setError(null);
-    try {
-      const conns = (await (await fetch("/api/postiz/connections")).json()) as { connections?: { id: string }[] };
-      const id = conns.connections?.[0]?.id;
-      if (!id) throw new Error("no connection configured");
-      await post(`/api/postiz/connections/${id}/refresh`);
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function connect() {
-    setBusy(true);
-    setError(null);
-    try {
-      await post("/api/postiz/connections", { label: "Default", apiKey });
-      setApiKey("");
-      router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
+  const ready = channels.filter((c) => !c.disabled);
   return (
     <Card>
       <CardHeader
         title="Channels"
-        meta={hasConnection ? `${channels.filter((c) => !c.disabled).length} connected` : "not connected"}
-        action={hasConnection ? <Button size="sm" onClick={refresh} loading={busy}>Refresh</Button> : undefined}
+        meta={hasConnection ? `${ready.length} ready` : "not connected"}
+        action={<ButtonLink href="/channels" size="sm">{hasConnection ? "Manage" : "Connect"}</ButtonLink>}
       />
       <CardBody>
-        {!hasConnection ? (
-          <div className="space-y-3">
-            <p className="text-sm text-[var(--muted)]">Paste a Postiz public API key (Settings → Developers) to list your channels.</p>
-            <div className="flex gap-2">
-              <TextInput type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Postiz API key" />
-              <Button variant="primary" onClick={connect} loading={busy} disabled={apiKey.length < 8}>Connect</Button>
-            </div>
-          </div>
-        ) : channels.length === 0 ? (
-          <EmptyState compact title="No channels cached yet." action={<Button size="sm" onClick={refresh} loading={busy}>Fetch from Postiz</Button>} />
+        {channels.length === 0 ? (
+          <EmptyState
+            compact
+            title={hasConnection ? "No channels yet. Connect TikTok, YouTube or Instagram to schedule here." : "Connect your publishing accounts to schedule approved work."}
+            action={<ButtonLink href="/channels" size="sm" variant="primary">Connect channels</ButtonLink>}
+          />
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2">
             {channels.map((c) => (
-              <li key={c.id} className="flex items-center gap-2 rounded-lg border border-[var(--hairline)] px-3 py-2">
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--canvas)] text-[10px] font-semibold uppercase">{c.platform.slice(0, 2)}</span>
+              <li key={c.id} className="flex items-center gap-2 rounded-lg border border-hairline px-3 py-2">
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-canvas" style={{ color: platformColor(c.identifier) }}>
+                  <PlatformIcon platform={c.identifier} size={12} />
+                </span>
                 <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
-                <Pill tone={c.disabled ? "gray" : "emerald"} dot={false}>{c.platform}</Pill>
+                <Pill tone={c.disabled ? "amber" : "emerald"} dot={false}>{c.disabled ? "reconnect" : c.platform}</Pill>
               </li>
             ))}
           </ul>
         )}
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
       </CardBody>
     </Card>
   );

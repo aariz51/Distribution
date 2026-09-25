@@ -8,6 +8,7 @@
     "./profile-assets": "./src/profile-assets.ts",
     "./reference-ranking": "./src/promo/reference-ranking.ts",
     "./reference-analysis": "./src/promo/direction.ts",
+    "./promo-showreel": "./src/promo/showreel.ts",
     "./screening-report": "./src/shorts/screening-report.ts",
     "./publishing-cover": "./src/publish/cover.ts"
   },

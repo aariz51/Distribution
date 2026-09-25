@@ -15,6 +15,8 @@ import type { Scene, SceneKind, Storyboard } from "../schema";
 import { alpha, bgDark, bgRadial, fontBody, fontHead, fontMono, useTheme } from "../theme";
 import { EASE } from "../animations/easings";
 import { bob, pulse, pushIn, ramp, seed, tailFade } from "../animations/motion";
+import { useTailFade } from "./tail";
+import { SHOWREEL_COMPONENTS } from "./showreel";
 import { sBounce, sEnter, sPop, sSettle } from "../animations/springs";
 import { ActionButton } from "../components/ActionButton";
 import { Bloom } from "../components/Bloom";
@@ -26,6 +28,7 @@ import { Particles } from "../components/Particles";
 import { PhoneFrame } from "../components/PhoneFrame";
 import { ScoreRing } from "../components/ScoreRing";
 import { Whoosh } from "../components/Whoosh";
+import { CubeList, CubeMorphText, CubeRise } from "../animations/cube";
 
 export interface SceneProps {
   scene: Scene;
@@ -61,7 +64,7 @@ const Hook: React.FC<SceneProps> = ({ scene }) => {
   const wide = width > height;
 
   const scale = pushIn(frame, 0, scene.duration, 1.06, 1.14);
-  const opacity = tailFade(frame, scene.duration, 16);
+  const opacity = useTailFade(frame, scene.duration, 16);
   const glyphIn = sPop({ frame, fps, delay: 10 });
   const glyphFloat = bob(frame, 10, 130);
   const glow = pulse(frame, 70);
@@ -106,7 +109,7 @@ const OneTap: React.FC<SceneProps> = ({ scene }) => {
   const accent = useSceneAccent(scene);
   const wide = width > height;
 
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const l1 = sEnter({ frame, fps, delay: 4 });
   const l2 = sEnter({ frame, fps, delay: 14 });
   const btn = sBounce({ frame, fps, delay: 26 });
@@ -194,7 +197,7 @@ const Verdict: React.FC<SceneProps> = ({ scene }) => {
   const eyebrow = sEnter({ frame, fps, delay: 4 });
   const subject = sEnter({ frame, fps, delay: 10 });
   const pill = sPop({ frame, fps, delay: REWARD });
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const score = Number(c(scene, "score", "92")) || 92;
   const ringSize = wide ? height * 0.42 : width * 0.52;
 
@@ -215,7 +218,8 @@ const Verdict: React.FC<SceneProps> = ({ scene }) => {
             transform: `translateY(${(1 - eyebrow) * 14}px)`,
           }}
         >
-          {c(scene, "eyebrow", "RESULT")}
+          {/* cube-motion `morph`: the status label changes state as the result lands (repo S4) */}
+          <CubeMorphText at={REWARD - 6} from={c(scene, "eyebrowFrom", "ANALYSING…")} to={c(scene, "eyebrow", "RESULT")} />
         </div>
         <div
           style={{
@@ -264,7 +268,7 @@ const Features: React.FC<SceneProps> = ({ scene }) => {
   const theme = useTheme();
   const accent = useSceneAccent(scene);
   const wide = width > height;
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const title = sEnter({ frame, fps, delay: 3 });
 
   const items = [
@@ -297,13 +301,17 @@ const Features: React.FC<SceneProps> = ({ scene }) => {
           {items.map((item, i) => {
             const e = sEnter({ frame, fps, delay: 12 + i * 8 });
             const rot = wide ? (i - 1) * 4 : 0;
+            const drift = bob(frame, wide ? 8 : 6, 150, i * 45);
             return (
-              <div key={item.t} style={{ opacity: e, transform: `translateY(${(1 - e) * 30}px) rotate(${rot}deg)` }}>
+              <div key={item.t} style={{ opacity: e, transform: `translateY(${(1 - e) * 30 + drift}px) rotate(${rot}deg)` }}>
                 <GlassCard width={cardW} height={cardH} tint={item.tint} glow={alpha(item.tint, 0.25)}>
                   <div style={{ boxSizing: "border-box", padding: cardW * (wide ? 0.08 : 0.05), display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: cardW * 0.025 }}>
                     <div style={{ flexShrink: 0, width: cardW * (wide ? 0.12 : 0.045), height: cardW * (wide ? 0.12 : 0.045), borderRadius: cardW * 0.02, background: alpha(item.tint, 0.18), border: `2px solid ${alpha(item.tint, 0.4)}` }} />
-                    <div style={{ fontFamily: fontHead(theme), fontSize: cardW * (wide ? 0.095 : 0.052) * Math.min(1, Math.sqrt(65 / Math.max(65, item.t.length))), fontWeight: 800, color: theme.colors.ink, lineHeight: 1.15, overflowWrap: "anywhere" }}>{item.t}</div>
-                    {item.s && <div style={{ fontFamily: fontBody(theme), fontSize: cardW * (wide ? 0.055 : 0.033), color: theme.colors.inkSoft, lineHeight: 1.3 }}>{item.s}</div>}
+                    {/* cube-motion `rise`, staggered by the library (repo S5) */}
+                    <CubeList at={12 + i * 8 + 6} style={{ display: "flex", flexDirection: "column", gap: cardW * 0.025 }}>
+                      <div style={{ fontFamily: fontHead(theme), fontSize: cardW * (wide ? 0.095 : 0.07) * Math.min(1, Math.sqrt(65 / Math.max(65, item.t.length))), fontWeight: 800, color: theme.colors.ink, lineHeight: 1.15, overflowWrap: "anywhere" }}>{item.t}</div>
+                      {item.s ? <div style={{ fontFamily: fontBody(theme), fontSize: cardW * (wide ? 0.055 : 0.04), color: theme.colors.inkSoft, lineHeight: 1.3 }}>{item.s}</div> : null}
+                    </CubeList>
                   </div>
                 </GlassCard>
               </div>
@@ -324,7 +332,7 @@ const Orbit: React.FC<SceneProps> = ({ scene, storyboard }) => {
   const theme = useTheme();
   const accent = useSceneAccent(scene);
   const wide = width > height;
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const enter = sSettle({ frame, fps, delay: 2 });
 
   const keys = scene.screens?.length ? scene.screens : Object.keys(storyboard.screens).slice(0, 6);
@@ -390,7 +398,7 @@ const Dashboard: React.FC<SceneProps> = ({ scene, storyboard }) => {
   const theme = useTheme();
   const accent = useSceneAccent(scene);
   const wide = width > height;
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const TAP = Math.round(scene.duration * 0.32);
 
   const rise = sSettle({ frame, fps, delay: 2 });
@@ -409,7 +417,7 @@ const Dashboard: React.FC<SceneProps> = ({ scene, storyboard }) => {
       <AbsoluteFill style={{ flexDirection: wide ? "row" : "column", alignItems: "center", justifyContent: "center", gap: wide ? width * 0.05 : height * 0.04, padding: wide ? "0 8%" : `${height * 0.06}px 0` }}>
         {!wide && (
           <div style={{ fontFamily: fontHead(theme), fontSize: width * 0.058, lineHeight: 1.15, fontWeight: 800, color: theme.colors.ink, textAlign: "center", maxWidth: "84%", overflowWrap: "anywhere" }}>
-            {c(scene, "pre", "One calm")} <span style={{ color: accent }}>{c(scene, "accent", "place")}</span> {c(scene, "post", "for all of it.")}
+            {c(scene, "pre")} <span style={{ color: accent }}>{c(scene, "accent")}</span> {c(scene, "post")}
           </div>
         )}
         <div style={{ perspective: 1600, transform: `translateY(${float}px)` }}>
@@ -419,7 +427,7 @@ const Dashboard: React.FC<SceneProps> = ({ scene, storyboard }) => {
         </div>
         {wide && (
           <div style={{ fontFamily: fontHead(theme), fontSize: height * 0.068, fontWeight: 800, color: theme.colors.ink, maxWidth: width * 0.3 }}>
-            {c(scene, "pre", "One calm")} <span style={{ color: accent }}>{c(scene, "accent", "place")}</span> {c(scene, "post", "for all of it.")}
+            {c(scene, "pre")} <span style={{ color: accent }}>{c(scene, "accent")}</span> {c(scene, "post")}
           </div>
         )}
       </AbsoluteFill>
@@ -427,8 +435,8 @@ const Dashboard: React.FC<SceneProps> = ({ scene, storyboard }) => {
         <div
           style={{
             position: "absolute",
-            left: wide ? width * 0.42 : width - cardW - width * 0.05,
-            top: wide ? height * 0.24 : height * 0.3,
+            left: wide ? width * 0.42 : Math.min(width - cardW - width * 0.08, width * 0.5),
+            top: wide ? height * 0.24 : height * 0.32,
             transform: `scale(${0.7 + callout * 0.3})`,
             opacity: callout,
           }}
@@ -454,7 +462,7 @@ const Tagline: React.FC<SceneProps> = ({ scene }) => {
   const theme = useTheme();
   const accent = useSceneAccent(scene);
   const wide = width > height;
-  const opacity = tailFade(frame, scene.duration, 12);
+  const opacity = useTailFade(frame, scene.duration, 12);
   const beat = Math.max(10, Math.round(scene.duration / 8));
 
   const words = [c(scene, "w1", "Ask."), c(scene, "w2", "Know."), c(scene, "w3", "Move.")].filter(Boolean);
@@ -499,7 +507,6 @@ const Logo: React.FC<SceneProps> = ({ scene, storyboard }) => {
   const enter = sSettle({ frame, fps, delay: 2 });
   const beat = 1 + pulse(frame, 90) * 0.012;
   const line = sEnter({ frame, fps, delay: 16 });
-  const badges = sEnter({ frame, fps, delay: 26 });
   const logoSize = wide ? height * 0.3 : width * 0.42;
 
   const badge = (top: string, main: string, key: string) =>
@@ -534,6 +541,7 @@ const Logo: React.FC<SceneProps> = ({ scene, storyboard }) => {
               height: logoSize,
               borderRadius: logoSize * 0.24,
               overflow: "hidden",
+              position: "relative",
               background: theme.colors.white,
               boxShadow: `0 ${logoSize * 0.06}px ${logoSize * 0.16}px ${alpha(theme.colors.ink, 0.14)}, 0 0 ${logoSize * 0.3}px ${alpha(accent, 0.18)}`,
               display: "flex",
@@ -542,6 +550,16 @@ const Logo: React.FC<SceneProps> = ({ scene, storyboard }) => {
             }}
           >
             <Img src={staticFile(storyboard.logo)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            {/* a single light sweep once the mark has landed */}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: `linear-gradient(105deg, transparent 35%, ${alpha(theme.colors.white, 0.55)} 50%, transparent 65%)`,
+                transform: `translateX(${interpolate(frame, [18, 48], [-120, 120], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })}%)`,
+                mixBlendMode: "screen",
+              }}
+            />
           </div>
         </div>
         <div
@@ -556,22 +574,22 @@ const Logo: React.FC<SceneProps> = ({ scene, storyboard }) => {
         >
           {storyboard.product.name}
         </div>
-        <div
+        {/* cube-motion `rise` for the tagline and a `CubeList` for the badges (repo S9) */}
+        <CubeRise
+          at={16}
           style={{
             fontFamily: fontBody(theme),
             fontSize: wide ? height * 0.026 : width * 0.033,
             color: theme.colors.inkSoft,
-            opacity: line,
             textAlign: "center",
             maxWidth: "76%",
           }}
         >
           {c(scene, "tagline", storyboard.product.tagline)}
-        </div>
-        <div style={{ display: "flex", gap: logoSize * 0.08, opacity: badges, transform: `translateY(${(1 - badges) * 14}px)` }}>
-          {badge(c(scene, "badge1Top", "Download on the"), c(scene, "badge1", "App Store"), "b1")}
-          {badge(c(scene, "badge2Top", "GET IT ON"), c(scene, "badge2", "Google Play"), "b2")}
-        </div>
+        </CubeRise>
+        <CubeList at={26} style={{ display: "flex", gap: logoSize * 0.08 }}>
+          {[badge(c(scene, "badge1Top", "Download on the"), c(scene, "badge1", "App Store"), "b1"), badge(c(scene, "badge2Top", "GET IT ON"), c(scene, "badge2", "Google Play"), "b2")].filter(Boolean)}
+        </CubeList>
       </AbsoluteFill>
     </AbsoluteFill>
   );
@@ -592,7 +610,7 @@ const Typewriter: React.FC<SceneProps> = ({ scene }) => {
   const typeFor = Math.round(scene.duration * 0.62);
   const shown = Math.floor(ramp(frame, 0, text.length, 6, typeFor, EASE.out));
   const caretOn = Math.floor(frame / 16) % 2 === 0 || frame < typeFor;
-  const opacity = tailFade(frame, scene.duration, 12);
+  const opacity = useTailFade(frame, scene.duration, 12);
   const ink = dark ? theme.colors.white : theme.colors.ink;
   const label = c(scene, "label", "");
 
@@ -630,7 +648,7 @@ const Split: React.FC<SceneProps> = ({ scene }) => {
   const theme = useTheme();
   const accent = useSceneAccent(scene);
   const wide = width > height;
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const seam = interpolate(sSettle({ frame, fps, delay: 0 }), [0, 1], [wide ? 0.5 : 0.5, 0.5]);
 
   const leftItems = [c(scene, "left1"), c(scene, "left2"), c(scene, "left3")].filter(Boolean);
@@ -701,7 +719,7 @@ const Steps: React.FC<SceneProps> = ({ scene }) => {
   const theme = useTheme();
   const accent = useSceneAccent(scene);
   const wide = width > height;
-  const opacity = tailFade(frame, scene.duration, 14);
+  const opacity = useTailFade(frame, scene.duration, 14);
   const title = sEnter({ frame, fps, delay: 2 });
 
   const rows = [
@@ -775,6 +793,7 @@ export const SCENE_COMPONENTS: Record<SceneKind, React.FC<SceneProps>> = {
   typewriter: Typewriter,
   split: Split,
   steps: Steps,
+  ...SHOWREEL_COMPONENTS,
 };
 
 // `seed` keeps deterministic randomness available to future scenes; referenced

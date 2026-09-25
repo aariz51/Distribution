@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 import { getProduct, listBrandAssets } from "@/lib/products";
-import { libraryCounts, listJobs } from "@/lib/library";
+import { libraryCounts, listJobs, productProgress } from "@/lib/library";
+import { getOrCreateConnection, listChannels } from "@/lib/publishing";
+import { GettingStarted } from "@/components/GettingStarted";
 import { AppShell } from "@/components/AppShell";
 import { WorkerStatus } from "@/components/WorkerStatus";
 import { PaletteCard } from "@/components/PaletteCard";
@@ -22,7 +24,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const product = await getProduct(session.accountId, id).catch(() => null);
   if (!product) notFound();
-  const [brandAssets, counts, recentJobs] = await Promise.all([listBrandAssets(id), libraryCounts(id), listJobs(id, 6)]);
+  const [brandAssets, counts, recentJobs, progress] = await Promise.all([listBrandAssets(id), libraryCounts(id), listJobs(id, 6), productProgress(id)]);
+  const channelCount = (await getOrCreateConnection(session.accountId)) ? (await listChannels(session.accountId)).filter((c) => !c.disabled).length : 0;
   const logo = brandAssets.find((a) => a.id === product.brand.logoAssetId);
   const screens = product.brand.screenshotAssetIds.flatMap(assetId => brandAssets.filter(a => a.id === assetId));
   const prefs = product.contentPreferences;
@@ -62,14 +65,16 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap items-start gap-3">
+        <div id="promo" className="flex flex-wrap items-start gap-3 scroll-mt-24">
           <ButtonLink href={`/products/${id}/edit`} variant="secondary">Edit product</ButtonLink>
-          <GeneratePromo savedReferenceId={product.sources.promoReference?.kind === "library" ? product.sources.promoReference.referenceId : undefined} savedReferenceUrl={product.sources.promoReference?.kind === "url" ? product.sources.promoReference.url : undefined} productId={id} hasLogo={Boolean(logo)} screenCount={screens.length} />
+          <GeneratePromo savedInspirationUrl={product.sources.promoReference?.kind === "url" ? product.sources.promoReference.url : undefined} productId={id} hasLogo={Boolean(logo)} screenCount={screens.length} />
           <ButtonLink href={`/products/${id}/sources`} variant="secondary">
             Generate shorts
           </ButtonLink>
         </div>
       </div>
+
+      <GettingStarted productId={id} progress={progress} channels={channelCount} />
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
         <StatTile label="In review" value={counts.review} tone="amber" href={`/products/${id}/library?status=review`} hint="Awaiting your approval" />

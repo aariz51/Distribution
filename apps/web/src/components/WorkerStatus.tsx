@@ -6,11 +6,11 @@ import { db, jobs, sql, workerHeartbeats } from "@/lib/db";
  * generate, the row says "queued", and nothing ever happens. This says so.
  */
 export async function WorkerStatus() {
-  const [workers, pending] = await Promise.all([
-    db.select().from(workerHeartbeats),
+  // Liveness is judged on the database clock, the same one the workers write.
+  const [live, pending] = await Promise.all([
+    db.select({ id: workerHeartbeats.workerId }).from(workerHeartbeats).where(sql`${workerHeartbeats.lastSeenAt} > now() - interval '90 seconds'`),
     db.select({ n: sql<number>`count(*)` }).from(jobs).where(sql`${jobs.status} in ('queued','retrying')`),
   ]);
-  const live = workers.filter((w) => Date.now() - w.lastSeenAt.getTime() < 90_000);
   const queued = Number(pending[0]?.n ?? 0);
   if (live.length > 0) return null;
 

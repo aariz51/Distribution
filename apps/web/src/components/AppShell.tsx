@@ -32,6 +32,9 @@ export function AppShell({ email, product, children }: { email: string; product?
             <Link href="/products" className="rounded-[6px] px-2 py-1 text-muted motion-safe:transition-colors hover:bg-canvas hover:text-ink">
               Products
             </Link>
+            <Link href="/channels" className="rounded-[6px] px-2 py-1 text-muted motion-safe:transition-colors hover:bg-canvas hover:text-ink">
+              Channels
+            </Link>
             {product && (
               <>
                 <span className="text-faint" aria-hidden>/</span>

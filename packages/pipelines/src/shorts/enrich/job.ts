@@ -5,7 +5,7 @@ import { saveGeneratedAsset } from "../../generated-assets";
 import { reconcileShortsProject } from "../completion";
 import os from "node:os";
 import path from "node:path";
-import { copyFile, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { PipelineError, newId, type TranscriptWord } from "@distribution/core";
 import { and, assets, candidates, eq, sourceVideos, transcripts } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
@@ -14,6 +14,7 @@ import { getStorage, keys } from "@distribution/storage";
 import { loadProfile, withScratch } from "../common";
 import { brollScenePlanPath, ensureSfxKit, runBroll, runOutro, runSfxMix } from "../sidecars";
 import { orderSteps, rebaseWords, type EnrichStep } from "./steps";
+import { sfxRecoveryWindows, type EffectPlacement } from "./sfx-recovery";
 
 /**
  * shorts.enrich — the AutoShorts enrichment chain as a job: B-roll → sound design →
@@ -91,42 +92,67 @@ export async function shortsEnrich(ctx: JobContext<"shorts.enrich">) {
       }, transcriptJsonPath: transcriptJson, output: path.join(scratch, "clip_broll.mp4"), peoplePolicy: effectivePeoplePolicy, signal: ctx.signal, onLog: log("broll") }));
     }
 
-    if (steps.includes("sfx")) {
-      await ctx.progress(70, "sfx", "Mixing sound design");
-      await applyStep("sfx", async () => {
-        const kit = await ensureSfxKit(path.dirname(await storage.localPathFor("tmp/sfx-kit/riser.wav")), { signal: ctx.signal, onLog: log("sfx") });
-        const kits = [kit, ...(process.env.SFX_EXTRA_KIT_DIR ? [process.env.SFX_EXTRA_KIT_DIR] : [])];
-        const scenes = applied.includes("broll") ? brollScenePlanPath(clip) : undefined;
-        return runSfxMix(current, kits, path.join(scratch, "clip_sfx.mp4"), { transcriptJson, scenes, signal: ctx.signal, onLog: log("sfx") });
-      });
-    }
+    // Sound effects and the end card are rendered together as the tail. If the
+    // finished clip is blocked only because an effect reads as music, the tail
+    // is rebuilt from the same picture without that effect and screened again.
+    const beforeTail = current;
+    const headApplied = [...applied];
+    let exclude: Array<[number, number]> = [];
+    let placements: EffectPlacement[] = [];
+    const kits = steps.includes("sfx") ? [await ensureSfxKit(path.dirname(await storage.localPathFor("tmp/sfx-kit/riser.wav")), { signal: ctx.signal, onLog: log("sfx") }), ...(process.env.SFX_EXTRA_KIT_DIR ? [process.env.SFX_EXTRA_KIT_DIR] : [])] : [];
+    const appName = profile.product.name.trim();
+    if (steps.includes("outro") && !appName) throw new PipelineError("product has no name for the end card", { step: "outro" });
+    const voiceAudioPath = steps.includes("outro") && prefs.voice === "female" ? await femaleOutroSpeech(`Download ${appName}`, path.join(scratch, "outro-voice.mp3"), {
+      signal: ctx.signal, recordUsage: usage => ctx.recordUsage({ ...usage, accountId: profile.accountId, productId }),
+    }) : undefined;
 
-    if (steps.includes("outro")) {
-      await ctx.progress(85, "outro", "Rendering end card");
-      await applyStep("outro", async () => {
-        const appName = profile.product.name.trim();
-        if (!appName) throw new PipelineError("product has no name for the end card", { step: "outro" });
-        const voiceAudioPath = prefs.voice === "female" ? await femaleOutroSpeech(`Download ${appName}`, path.join(scratch, "outro-voice.mp3"), {
-          signal: ctx.signal, recordUsage: usage => ctx.recordUsage({ ...usage, accountId: profile.accountId, productId }),
-        }) : undefined;
-        return runOutro(current, appName, path.join(scratch, "clip_final.mp4"), {
+    let out: Awaited<ReturnType<typeof validateEnrichedMedia>>;
+    let outputScreening: Awaited<ReturnType<typeof screenFinalClip>>;
+    for (let attempt = 0; ; attempt++) {
+      current = beforeTail;
+      applied.splice(0, applied.length, ...headApplied);
+      if (steps.includes("sfx")) {
+        await ctx.progress(70, "sfx", attempt === 0 ? "Mixing sound design" : "Remixing sound design without the flagged effect");
+        const planJson = path.join(scratch, `sfx-plan-${attempt}.json`);
+        const scenes = applied.includes("broll") ? brollScenePlanPath(clip) : undefined;
+        await applyStep("sfx", () => runSfxMix(current, kits, path.join(scratch, `clip_sfx_${attempt}.mp4`), { transcriptJson, scenes, exclude, planJson, signal: ctx.signal, onLog: log("sfx") }));
+        placements = await readFile(planJson, "utf8").then((t) => (JSON.parse(t) as { placements?: EffectPlacement[] }).placements ?? [], () => []);
+        // If recovery removed every effect, sound design was not applied; say so
+        // rather than letting the clip count as having it.
+        if (exclude.length && placements.length === 0) {
+          applied.splice(applied.indexOf("sfx"), 1);
+          skipped.sfx = "every effect was removed after screening heard them as music";
+        }
+      }
+      if (steps.includes("outro")) {
+        await ctx.progress(85, "outro", "Rendering end card");
+        await applyStep("outro", () => runOutro(current, appName, path.join(scratch, `clip_final_${attempt}.mp4`), {
           logo: logoPath,
           voice: prefs.voice,
           voiceAudioPath,
           signal: ctx.signal,
           onLog: log("outro"),
-        });
-      });
+        }));
+      }
+      if (!applied.length) throw new PipelineError(`no enrichment step succeeded: ${JSON.stringify(skipped)}`, { step: "enrich" });
+
+      await ctx.progress(95, "store", "storing enriched clip");
+      out = await validateEnrichedMedia(current, clip, steps.includes("outro"), ctx.signal);
+      await ctx.progress(96, "final_screening", "Checking finished clip and added media");
+      try {
+        outputScreening = await screenFinalClip(ctx, current);
+        break;
+      } catch (error) {
+        const windows = steps.includes("sfx") && attempt < 2 ? sfxRecoveryWindows(error, placements) : null;
+        if (!windows) throw error;
+        exclude = [...exclude, ...windows];
+        await ctx.event("warn", `A sound effect read as music at ${windows.map(([a, b]) => `${a.toFixed(1)}–${b.toFixed(1)}s`).join(", ")}; rebuilding without it`, { windows, attempt }, "sfx");
+      }
     }
+    if (exclude.length && applied.includes("sfx")) skipped.sfx = `effects under ${exclude.length} window(s) removed after screening heard them as music`;
 
-    if (!applied.length) throw new PipelineError(`no enrichment step succeeded: ${JSON.stringify(skipped)}`, { step: "enrich" });
-
-    await ctx.progress(95, "store", "storing enriched clip");
     // A retry keeps its file identity; a new job must not replace an earlier derivative.
     const key = keys.clip(projectId, candidateId, `enriched-${ctx.jobId}`);
-    const out = await validateEnrichedMedia(current, clip, steps.includes("outro"), ctx.signal);
-    await ctx.progress(96, "final_screening", "Checking finished clip and added media");
-    const outputScreening = await screenFinalClip(ctx, current);
     await storage.putFile(key, current, { contentType: "video/mp4" });
     let id = newId();
     id = await saveGeneratedAsset(db, {

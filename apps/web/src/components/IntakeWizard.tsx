@@ -389,7 +389,7 @@ export function IntakeWizard() {
             {step === 2 && (
               <div className="space-y-5">
                 <p className="text-sm text-muted">All optional. Everything here can also be added from the product page later.</p>
-                <Field label="Reference video for the promo film" optional htmlFor="f-ref" hint="Used only as a motion-language reference; nothing is copied. Leave empty to pick from the curated reference library.">
+                <Field label="Inspiration video for the promo film" optional htmlFor="f-ref" hint="A YouTube promo whose style you like. It inspires the film’s structure and motion; nothing is copied. Leave empty to generate without one.">
                   <TextInput id="f-ref" value={referenceUrl} onChange={(e) => setReferenceUrl(e.target.value)} placeholder="https://youtube.com/watch?v=…" />
                 </Field>
                 {referenceUrl && (

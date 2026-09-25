@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
 vi.mock("node:fs/promises", () => ({
   copyFile: async (source: string, destination: string) => { state.files.set(destination, state.files.get(source)!); },
   writeFile: async () => {},
+  // The SFX plan file is never written by the mocked mixer; a missing plan means no placements.
+  readFile: async () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); },
 }));
 vi.mock("@distribution/media", () => ({ GB: 1024 ** 3, assertDiskSpace: async () => {} }));
 vi.mock("@distribution/providers", () => ({ AnthropicProvider: class {}, femaleOutroSpeech: vi.fn() }));

@@ -47,6 +47,11 @@ const timestamps = {
 export const accounts = pgTable("accounts", {
   id: uuid().primaryKey(),
   name: text().notNull(),
+  /**
+   * The operator's own workspace. Only it may adopt server-level credentials
+   * such as POSTIZ_API_KEY; every signed-up workspace brings its own.
+   */
+  isOwner: boolean().notNull().default(false),
   ...timestamps,
 });
 

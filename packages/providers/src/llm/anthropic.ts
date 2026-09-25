@@ -1,6 +1,6 @@
 import { withProviderSpend } from "@distribution/core/provider-budget";
 import type { CallContext, ChatProvider, ChatRequest, ChatResponse, ContentPart } from "../types";
-import { postJsonWithRetry } from "../policy";
+import { MAX_ATTEMPTS, postJsonWithRetry } from "../policy";
 import { estimateChatUsd, reserveChatUsd } from "../pricing";
 
 interface AnthropicResponse { content?: { type: string; text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number } }
@@ -32,7 +32,7 @@ export class AnthropicProvider implements ChatProvider {
     return anthropicAuthHeaders() !== null;
   }
   async chat(req: ChatRequest, model: string, ctx: CallContext): Promise<ChatResponse> {
-    return withProviderSpend(reserveChatUsd(model, req, Math.min(req.maxTokens, ctx.maxOutputTokens ?? req.maxTokens), 5, false), () => this.chatReserved(req, model, ctx));
+    return withProviderSpend(reserveChatUsd(model, req, Math.min(req.maxTokens, ctx.maxOutputTokens ?? req.maxTokens), ctx.maxAttempts ?? MAX_ATTEMPTS, false), () => this.chatReserved(req, model, ctx));
   }
 
   private async chatReserved(req: ChatRequest, model: string, ctx: CallContext): Promise<ChatResponse> {
@@ -49,6 +49,7 @@ export class AnthropicProvider implements ChatProvider {
     if (req.system) body.system = req.json ? `${req.system}\n\nRespond with a single JSON object and nothing else.` : req.system;
     else if (req.json) body.system = "Respond with a single JSON object and nothing else.";
     const { data, attempts } = await postJsonWithRetry<AnthropicResponse>({
+      maxAttempts: ctx.maxAttempts,
       url: "https://api.anthropic.com/v1/messages",
       headers,
       body,

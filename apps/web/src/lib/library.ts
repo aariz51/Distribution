@@ -1,6 +1,6 @@
 import { SCREENING_POLICY_VERSION, hasCompleteScreeningPass } from "@distribution/pipelines/screening-report";
 import { getStorage, storedContentHash } from "@distribution/storage";
-import { and, asc, assetCopy, assets, candidates, db, desc, eq, inArray, jobs, projects, sourceVideos, sql } from "./db";
+import { and, asc, assetCopy, assets, candidates, db, desc, eq, inArray, jobs, projects, publishSchedule, sourceVideos, sql } from "./db";
 
 const storage = getStorage();
 
@@ -161,6 +161,18 @@ export async function libraryCounts(productId: string): Promise<LibraryCounts> {
     total += Number(r.n);
   }
   return { total, byStatus, review: byStatus.review ?? 0, approved: byStatus.approved ?? 0, published: byStatus.published ?? 0, failed: byStatus.failed ?? 0 };
+}
+
+/** What a product has produced so far, for the getting-started checklist. */
+export async function productProgress(productId: string): Promise<{ promos: number; clips: number; scheduled: number }> {
+  const rows = await db
+    .select({ type: assets.type, n: sql<number>`count(*)` })
+    .from(assets)
+    .where(and(eq(assets.productId, productId), sql`${assets.status} <> 'failed'`, inArray(assets.type, ["promo_vertical", "clip"])))
+    .groupBy(assets.type);
+  const scheduled = await db.select({ n: sql<number>`count(*)` }).from(publishSchedule).innerJoin(assets, eq(assets.id, publishSchedule.assetId)).where(eq(assets.productId, productId));
+  const n = (t: string) => Number(rows.find((r) => r.type === t)?.n ?? 0);
+  return { promos: n("promo_vertical"), clips: n("clip"), scheduled: Number(scheduled[0]?.n ?? 0) };
 }
 
 export async function listSources(productId: string): Promise<SourceView[]> {

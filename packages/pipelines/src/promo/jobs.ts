@@ -1,8 +1,7 @@
 import { renderBrandedThumbnail } from "../thumbnail-render";
-import { profileAssets } from "../profile-assets";
 import { saveGeneratedAsset } from "../generated-assets";
 import path from "node:path";
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { PipelineError, newId } from "@distribution/core";
 import { assets, eq, projects, sql } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
@@ -10,14 +9,8 @@ import { GB, assertDecodableVideo, assertDiskSpace, bin, probeMedia, run } from 
 import { renderPromo, type CompositionId } from "@distribution/promo-kit";
 import type { Storyboard, Theme } from "@distribution/promo-kit/schema";
 import { getStorage, keys } from "@distribution/storage";
+import type { Inspiration } from "./showreel";
 import { loadProfile, withScratch } from "../shorts/common";
-import { buildStoryboard } from "./storyboard-rules";
-import { creativeDirectionMarkdown } from "./creative-direction";
-import { themeForProduct } from "./theme";
-import { DirectedStructure, ReferenceAnalysis } from "./direction";
-import { STRUCTURES } from "./structures";
-
-import { KIT_ROOT, stageRuntimeAssets } from "./runtime-assets";
 
 const DELIVERABLES: { id: CompositionId; type: "promo_vertical" | "promo_landscape" | "promo_store_portrait" | "promo_store_landscape"; w: number; h: number }[] = [
   { id: "PromoVertical", type: "promo_vertical", w: 1080, h: 1920 },
@@ -42,6 +35,18 @@ export interface PromoParams {
   referenceAnalysisCached?: boolean;
   structureId?: string;
   notes?: string[];
+  /** which of the three inspiration modes this film uses (set by the API) */
+  inspiration?: Inspiration;
+  /** who directs: Opus over OpenRouter (default) or a plan written in a Claude Code session */
+  director?: "openrouter" | "claude-code";
+  directorLabel?: string;
+  /** The none-mode brief for this film; absent means SHOWREEL_PROMPT. */
+  creativePrompt?: string;
+  /** false: the film is made from the name, description and logo only */
+  useScreenshots?: boolean;
+  plan?: unknown;
+  referenceBreakdown?: unknown;
+  referenceProvenance?: Record<string, unknown>;
 }
 
 export async function projectParams(ctx: { db: JobContext<"promo.run">["db"] }, projectId: string): Promise<PromoParams> {
@@ -57,103 +62,6 @@ export async function mergeParams(db: JobContext<"promo.run">["db"], projectId: 
     .where(eq(projects.id, projectId));
 }
 
-/**
- * promo.run — decide the film and write it down.
- *
- * The default path is deterministic: the structure and every line of copy come
- * from the product profile, so a promo costs nothing and cannot invent a claim.
- * `params.useLlm` opts into the reference-analysis path, which spends provider
- * credits and is therefore never the default.
- */
-export async function promoRun(ctx: JobContext<"promo.run">) {
-  const { productId, projectId } = ctx.payload;
-  const db = ctx.db;
-  const params = await projectParams({ db }, projectId);
-
-  if (params.useLlm || ctx.payload.referenceUrl || ctx.payload.referenceId || ctx.payload.referenceAssetId) {
-    await ctx.event("info", "reference-driven storyboard requested; handing off to promo.analyze_reference", undefined, "route");
-    await ctx.queue.enqueue(
-      "promo.analyze_reference",
-      { productId, projectId, ...(ctx.payload.referenceUrl ? { referenceUrl: ctx.payload.referenceUrl } : {}), ...(ctx.payload.referenceId ? { referenceId: ctx.payload.referenceId } : {}), ...(ctx.payload.referenceAssetId ? { referenceAssetId: ctx.payload.referenceAssetId } : {}) },
-      { productId, projectId, singletonKey: `promo.analyze:${projectId}` },
-    );
-    await ctx.progress(100, "done", "queued reference analysis");
-    return { path: "llm" };
-  }
-
-  return createPromoStoryboard(ctx);
-}
-
-export async function createPromoStoryboard(ctx: JobContext<"promo.run"> | JobContext<"promo.storyboard">) {
-  const { productId, projectId } = ctx.payload;
-  const db = ctx.db;
-  const profile = await loadProfile(db, productId, projectId);
-  const params = await projectParams({ db }, projectId);
-  const storage = getStorage();
-  await ctx.progress(10, "assets", "collecting brand assets");
-  const brand = await profileAssets(db, profile);
-  const logoRow = brand.logo;
-  const screenRows = brand.screenshots;
-  if (!logoRow) throw new PipelineError("a logo is required for the promo film — upload one on the product page", { retrySafe: false, step: "assets" });
-
-  // Stage assets into the project's own public/ dir: Remotion's staticFile root.
-  const publicDir = path.join(path.dirname(await storage.localPathFor(keys.promo(projectId, "public/.keep"))), "");
-  await mkdir(path.join(publicDir, "app-screens"), { recursive: true });
-  await mkdir(path.join(publicDir, "logo"), { recursive: true });
-  await mkdir(path.join(publicDir, "audio"), { recursive: true });
-  await copyFile(await storage.localPathFor(logoRow.storageKey), path.join(publicDir, "logo", "app-logo.png"));
-  const screens: Record<string, string> = {};
-  for (const [i, s] of screenRows.entries()) {
-    const name = `${String(i + 1).padStart(2, "0")}-screen.png`;
-    await copyFile(await storage.localPathFor(s.storageKey), path.join(publicDir, "app-screens", name));
-    screens[`screen${i + 1}`] = `app-screens/${name}`;
-  }
-  // Fonts and sound effects ship with the kit.
-  await stageRuntimeAssets(publicDir);
-
-  await ctx.progress(45, "direct", "choosing a structure and writing the storyboard");
-  const built = buildStoryboard({
-    profile,
-    screens,
-    logo: "logo/app-logo.png",
-    durationSec: params.durationSec ?? 33,
-    audioSrc: null,
-    ...(params.directedStructure ? { structure: DirectedStructure.parse(params.directedStructure) } : {}),
-  });
-  const theme = themeForProduct(profile);
-
-  const md = creativeDirectionMarkdown({ profile, storyboard: built.storyboard, structure: built.structure, notes: built.notes, reference: params.referenceUrl ? { url: params.referenceUrl, title: params.referenceTitle, analysisSummary: params.referenceAnalysis ? ReferenceAnalysis.parse(params.referenceAnalysis).summary : undefined } : null, provider: params.directionProvider });
-  const mdKey = keys.promo(projectId, "CREATIVE_DIRECTION.md");
-  await storage.putBuffer(mdKey, Buffer.from(md), { contentType: "text/markdown" });
-  const sbKey = keys.promo(projectId, "storyboard.json");
-  await storage.putBuffer(sbKey, Buffer.from(JSON.stringify({ storyboard: built.storyboard, theme }, null, 2)), { contentType: "application/json" });
-
-  for (const [type, key, mime] of [
-    ["creative_direction_md", mdKey, "text/markdown"],
-    ["storyboard", sbKey, "application/json"],
-  ] as const) {
-    await saveGeneratedAsset(db, {
-      id: newId(),
-      productId,
-      projectId,
-      type,
-      storageKey: key,
-      mimeType: mime,
-      status: "review",
-      approvalState: "pending",
-      profileVersion: profile.version,
-      jobId: ctx.jobId,
-      metadata: { structure: built.structure.id, scenes: built.storyboard.scenes.length },
-    });
-  }
-
-  await mergeParams(db, projectId, { storyboard: built.storyboard, theme, publicDir, structureId: built.structure.id, notes: built.notes });
-  await ctx.event("info", `structure "${built.structure.id}": ${built.storyboard.scenes.map((s) => s.kind).join(" → ")}`, undefined, "direct");
-  await ctx.queue.enqueue("promo.build", { productId, projectId }, { productId, projectId, singletonKey: `promo.build:${projectId}` });
-  await ctx.progress(100, "done", "storyboard written");
-  return { structure: built.structure.id, scenes: built.storyboard.scenes.length, screens: Object.keys(screens).length };
-}
-
 /** promo.build — mix the sound master against the storyboard's cues, then fan out the renders. */
 export async function promoBuild(ctx: JobContext<"promo.build">) {
   const { productId, projectId } = ctx.payload;
@@ -163,10 +71,13 @@ export async function promoBuild(ctx: JobContext<"promo.build">) {
   const sb = params.storyboard;
 
   await ctx.progress(10, "audio", `mixing ${sb.sfx.length} sound cues`);
-  const fxPath = path.join(params.publicDir, "fx.json");
-  await writeFile(fxPath, JSON.stringify(sb.sfx));
+  // The skill's latest build_audio.py, copied into the project at staging: it
+  // reads sound.json, mixes the bundled effects with no music and no bed.
+  const projectDir = path.dirname(params.publicDir);
+  const soundPath = path.join(projectDir, "sound.json");
+  await writeFile(soundPath, JSON.stringify({ duration: sb.durationFrames / sb.fps, cues: sb.sfx.map((c) => ({ fx: c.effect, at: +c.t.toFixed(3), vol: c.vol })) }, null, 1));
   const masterPath = path.join(params.publicDir, "audio", "master.wav");
-  await run(bin("python"), [path.join(KIT_ROOT, "scripts", "build_audio.py"), "--duration", String(sb.durationFrames / sb.fps), "--fx", fxPath, "--out", masterPath, "--sfx-dir", path.join(params.publicDir, "sfx")], {
+  await run(bin("python"), [path.join(projectDir, "scripts", "build_audio.py"), "--timeline", soundPath, "--duration", String(sb.durationFrames / sb.fps), "--no-vo"], {
     timeoutMs: 15 * 60_000,
     signal: ctx.signal,
     step: "audio",
@@ -369,4 +280,3 @@ export async function promoFinalize(ctx: JobContext<"promo.finalize">) {
   });
 }
 
-export { STRUCTURES };

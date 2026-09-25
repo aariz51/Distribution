@@ -1,36 +1,35 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
 
-interface ReferenceChoice { id: string; title: string; posterUrl: string; durationSec: number | null; visualLanguage: string[]; reasons: string[] }
+const DEFAULT_INSPIRATION_URL = "https://www.youtube.com/watch?v=9sMVY15d7BA";
 
 /**
- * Starts a promo run. The deterministic path needs no provider key, so the
- * default has no cost and no model call; the reference path is an explicit
- * opt-in because it spends credits.
+ * Starts a 15-second promo film. Three modes, decided by two inputs:
+ *   your own YouTube inspiration → its structure and motion inspire the film
+ *   "use default inspiration" on → our default video inspires it instead
+ *   neither                      → no video is fetched; the motion-design brief directs it
+ * Screenshots are optional: switched off (or absent), the film is made from the
+ * name, description and logo only.
  */
-export function GeneratePromo({ productId, hasLogo, screenCount, savedReferenceUrl = "", savedReferenceId }: { productId: string; hasLogo: boolean; screenCount: number; savedReferenceUrl?: string; savedReferenceId?: string }) {
+export function GeneratePromo({ productId, hasLogo, screenCount, savedInspirationUrl = "" }: { productId: string; hasLogo: boolean; screenCount: number; savedInspirationUrl?: string }) {
   const router = useRouter();
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [duration, setDuration] = useState(24);
-  const [useLlm, setUseLlm] = useState(Boolean(savedReferenceUrl || savedReferenceId));
-  const [useSavedReference, setUseSavedReference] = useState(Boolean(savedReferenceId));
-  const [referenceUrl, setReferenceUrl] = useState(savedReferenceUrl);
-  const [open, setOpen] = useState(false);
-  const [references, setReferences] = useState<ReferenceChoice[]>([]);
-  const [selectedReference, setSelectedReference] = useState("");
-  const [referenceError, setReferenceError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open || !useLlm) return;
-    const controller = new AbortController();
-    fetch(`/api/products/${productId}/promo/references?durationSec=${duration}`, { signal: controller.signal })
-      .then(async response => { if (!response.ok) throw new Error("Could not load reference choices"); return response.json() as Promise<{ references: ReferenceChoice[] }>; })
-      .then(body => { setReferences(body.references); setReferenceError(null); setSelectedReference(current => body.references.some(r => r.id === current) ? current : ""); })
-      .catch(error => { if (!controller.signal.aborted) setReferenceError(error instanceof Error ? error.message : String(error)); });
-    return () => controller.abort();
-  }, [productId, duration, open, useLlm]);
+  // The intake wizard can save an inspiration video; it prefills the field.
+  const [url, setUrl] = useState(savedInspirationUrl);
+  const [useDefault, setUseDefault] = useState(false);
+  const [useScreens, setUseScreens] = useState(screenCount > 0);
+
+  const custom = url.trim().length > 0;
+  const mode = custom ? "custom" : useDefault ? "default" : "none";
+  const summary = {
+    custom: "Your video inspires the structure, pacing and motion. The film is original and uses only your product.",
+    default: "Our default inspiration video will be fetched and used as the creative reference.",
+    none: "No video is fetched. The film is directed as a motion-design showreel for your product.",
+  }[mode];
 
   async function start() {
     setBusy(true);
@@ -39,11 +38,14 @@ export function GeneratePromo({ productId, hasLogo, screenCount, savedReferenceU
       const res = await fetch(`/api/products/${productId}/promo`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ durationSec: duration, useLlm, ...(useLlm && !useSavedReference && !referenceUrl.trim() && selectedReference ? { referenceId: selectedReference } : {}), ...(useLlm && useSavedReference && savedReferenceId ? { referenceId: savedReferenceId } : {}), ...(useLlm && !useSavedReference && referenceUrl.trim() ? { referenceUrl: referenceUrl.trim() } : {}) }),
+        body: JSON.stringify({ ...(custom ? { inspirationUrl: url.trim() } : {}), useDefaultInspiration: !custom && useDefault, useScreenshots: useScreens && screenCount > 0 }),
       });
-      const body = (await res.json()) as { error?: string; projectId?: string };
-      if (!res.ok) throw new Error(body.error ?? `request failed (${res.status})`);
+      const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: { message?: string }[] };
+      if (!res.ok) throw new Error(body.error && body.error !== "validation" ? body.error : body.issues?.[0]?.message ?? `Could not start the promo (${res.status}).`);
       setOpen(false);
+      setUrl(savedInspirationUrl);
+      setUseDefault(false);
+      setUseScreens(screenCount > 0);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -62,6 +64,7 @@ export function GeneratePromo({ productId, hasLogo, screenCount, savedReferenceU
       </div>
     );
   }
+  const withScreens = useScreens && screenCount > 0;
 
   return (
     <div className="text-right">
@@ -70,60 +73,89 @@ export function GeneratePromo({ productId, hasLogo, screenCount, savedReferenceU
           Generate promo film
         </Button>
       ) : (
-        <div className="inline-flex flex-col items-end gap-2 rounded-[10px] border border-hairline bg-surface p-3 text-left">
-          <label className="flex items-center gap-2 text-[13px]">
-            <span className="text-muted">Length</span>
-            <select
-              className="rounded-[6px] border border-hairline bg-canvas px-2 py-1 text-[13px]"
-              value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
+        <div className="flex w-[380px] max-w-[90vw] flex-col gap-4 rounded-[10px] border border-hairline bg-surface p-4 text-left shadow-[var(--shadow-raise)]">
+          <div>
+            <p className="text-sm font-semibold">Promo film · 15 seconds</p>
+            <p className="mt-0.5 text-xs text-muted">
+              Made from your logo{withScreens ? `, ${screenCount} screenshot${screenCount === 1 ? "" : "s"}` : ""}, features and brand colours.
+            </p>
+          </div>
+
+          <label className="flex flex-col gap-1.5 text-[13px]">
+            <span className="font-medium">
+              Your inspiration video <span className="font-normal text-faint">optional</span>
+            </span>
+            <input
+              type="url"
+              inputMode="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
               disabled={busy}
-            >
-              {[18, 24, 33, 45].map((d) => (
-                <option key={d} value={d}>
-                  {d}s
-                </option>
-              ))}
-            </select>
+              placeholder="https://youtube.com/watch?v=…"
+              className="h-9 rounded-[8px] border border-hairline-strong bg-surface px-3 text-sm placeholder:text-faint"
+            />
+            <span className="text-xs text-muted">A promo whose style you like. We study it and build an original film around your product.</span>
           </label>
-          <label className="flex items-center gap-2 text-[13px]">
-            <input type="checkbox" checked={useLlm} onChange={e => setUseLlm(e.target.checked)} disabled={busy} />
-            Use AI direction
-          </label>
-          {useLlm && savedReferenceId && <label className="flex items-center gap-2 text-[13px]">
-            <input type="checkbox" checked={useSavedReference} onChange={e => setUseSavedReference(e.target.checked)} disabled={busy} />
-            Use the saved library reference
-          </label>}
-          {useLlm && !useSavedReference && <label className="flex w-full flex-col gap-1 text-[13px]">
-            Reference video (optional)
-            <input type="url" value={referenceUrl} onChange={e => setReferenceUrl(e.target.value)} disabled={busy} placeholder="YouTube video URL" className="rounded-[6px] border border-hairline bg-canvas px-2 py-1" />
-          </label>}
-          {useLlm && !useSavedReference && !referenceUrl.trim() && <fieldset className="max-w-[360px] space-y-2">
-            <legend className="text-sm font-medium">Choose a reference</legend>
-            <label className="flex gap-2 text-xs"><input type="radio" name={`reference-${productId}`} checked={!selectedReference} onChange={() => setSelectedReference("")} disabled={busy} />Direct from my product profile</label>
-            {references.map(reference => <label key={reference.id} className="flex items-start gap-2 rounded border border-hairline p-2 text-xs">
-              <input type="radio" name={`reference-${productId}`} checked={selectedReference === reference.id} onChange={() => setSelectedReference(reference.id)} disabled={busy} />
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={reference.posterUrl} alt="" width={88} height={66} className="rounded object-cover" loading="lazy" referrerPolicy="no-referrer" />
-              <span><strong>{reference.title}</strong><span className="block text-muted">{reference.durationSec}s · {reference.visualLanguage.slice(0, 3).join(", ")}</span><span className="block text-faint">{reference.reasons.join(". ")}</span></span>
-            </label>)}
-            {referenceError && <p role="alert" className="text-xs text-red-600">{referenceError}</p>}
-          </fieldset>}
-          <p className="max-w-[34ch] text-[12px] leading-relaxed text-faint">
-            Renders four formats from your {screenCount > 0 ? `${screenCount} screenshots` : "profile"} and palette.
-            {useLlm ? " AI direction uses provider credits. References guide the edit; your assets appear in the film." : " This option uses no AI provider credits."}
+
+          <Toggle id="default-inspiration" label="Use default inspiration" on={!custom && useDefault} disabled={busy || custom} onToggle={() => setUseDefault((v) => !v)}>
+            When on, we fetch{" "}
+            <a href={DEFAULT_INSPIRATION_URL} target="_blank" rel="noreferrer" className="underline decoration-hairline-strong underline-offset-2 hover:decoration-ink">
+              our default video
+            </a>{" "}
+            and use it as creative inspiration.{custom ? " Your own video is used instead." : ""}
+          </Toggle>
+
+          <Toggle id="use-screenshots" label="Use my app screenshots" on={withScreens} disabled={busy || screenCount === 0} onToggle={() => setUseScreens((v) => !v)}>
+            {screenCount === 0
+              ? "No screenshots uploaded, so the film is made from your name, description and logo."
+              : withScreens
+                ? "Your screens appear in the film."
+                : "Off: no screenshots are used. The film is made from your name, description and logo."}
+          </Toggle>
+
+          <p className="rounded-[8px] bg-canvas px-3 py-2 text-xs text-muted" aria-live="polite">
+            <span className="font-medium text-ink">{{ custom: "Your inspiration", default: "Default inspiration", none: "No inspiration" }[mode]}.</span> {summary}
           </p>
-          {error && <p className="max-w-[34ch] text-[12px] text-red-600">{error}</p>}
-          <div className="flex gap-2">
+
+          {error && (
+            <p role="alert" className="text-xs text-red-600">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
             <Button variant="primary" onClick={start} loading={busy}>
-              {busy ? "Starting" : "Start render"}
+              {busy ? "Starting" : "Generate"}
             </Button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Toggle({ id, label, on, disabled, onToggle, children }: { id: string; label: string; on: boolean; disabled: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <div className={`flex items-start justify-between gap-3 rounded-[8px] border border-hairline p-3 ${disabled ? "opacity-50" : ""}`}>
+      <span className="text-[13px]">
+        <span className="block font-medium" id={`${id}-label`}>
+          {label}
+        </span>
+        <span className="mt-0.5 block text-xs text-muted">{children}</span>
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-labelledby={`${id}-label`}
+        disabled={disabled}
+        onClick={onToggle}
+        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-accent" : "bg-hairline-strong"}`}
+      >
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${on ? "translate-x-4" : "translate-x-0.5"}`} />
+      </button>
     </div>
   );
 }

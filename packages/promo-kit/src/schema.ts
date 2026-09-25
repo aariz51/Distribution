@@ -69,12 +69,26 @@ export const SceneKind = z.enum([
   "typewriter", // signature device: mono caret line, light or inverted ground
   "split", // signature device: light human world left / dark system right
   "steps", // signature device: numbered step rows
+  // Showreel devices (short, motion-led films)
+  "morph", // one shape: dot → diamond → speed-ramped bar → a mask revealing a screen, or the logo when there are no screens
+  "kinetic", // type slams on the beat, ground flips, Cube-morphed counter
+  "cube", // 3D prism of product screens snapping face to face; feature label morphs
+  "wall", // isometric wall of screens, camera tracks then dives into the hero
+  "tour", // phone whose screen swipes per feature while a Cube list lights the row
 ]);
 export type SceneKind = z.infer<typeof SceneKind>;
+
+/** How a scene arrives over the previous one. `cut` is a hard cut. */
+export const Transition = z.enum(["cut", "iris", "slash", "push", "zoom", "flash"]);
+export type Transition = z.infer<typeof Transition>;
+/** Overlap, in frames at 60fps, for every non-cut transition. */
+export const TRANSITION_FRAMES = 14;
 
 export const Scene = z.object({
   id: z.string().min(1),
   kind: SceneKind,
+  /** how this scene enters over the previous one */
+  transition: Transition.default("cut"),
   /** start frame (inclusive) */
   start: z.number().int().min(0),
   /** duration in frames */
@@ -114,7 +128,8 @@ export const Storyboard = z.object({
 });
 export type Storyboard = z.infer<typeof Storyboard>;
 
-export const KitProps = z.object({ storyboard: Storyboard, theme: Theme });
+/** `cube: false` switches every Cube Motion off (repo cube.tsx), to measure its contribution. */
+export const KitProps = z.object({ storyboard: Storyboard, theme: Theme, cube: z.boolean().optional() });
 export type KitProps = z.infer<typeof KitProps>;
 
 /** Copy keys each kind reads (all optional; sensible fallbacks). Handed to the LLM. */
@@ -131,12 +146,18 @@ export const COPY_SLOTS: Record<SceneKind, string[]> = {
   typewriter: ["label (mono eyebrow)", "line"],
   split: ["leftTitle", "left1", "left2", "left3", "rightTitle", "right1", "right2", "right3"],
   steps: ["title", "s1", "s1sub", "s2", "s2sub", "s3", "s3sub", "s4", "s4sub"],
+  kinetic: ["w1", "w2", "w3", "w4", "w5 (1–5 short words or 2-word phrases, one per beat)", "caption (mono, optional)"],
+  cube: ["eyebrow (mono, optional)", "f1", "f2", "f3", "f4 (feature names, one per face)"],
+  wall: ["title", "titleAccent"],
+  tour: ["f1", "f2", "f3", "f4 (feature names, each shown with its screen)"],
+  morph: ["word (one big word behind the shape)", "label (mono caption, optional)"],
 };
 
 /** Which kinds need at least one screen key. */
 export const SCREEN_KINDS: Record<SceneKind, number> = {
   hook: 0, oneTap: 0, press: 0, verdict: 0, features: 0, orbit: 3, dashboard: 1, tagline: 0, logo: 0,
   typewriter: 0, split: 0, steps: 0,
+  kinetic: 0, cube: 2, wall: 3, tour: 1, morph: 0,
 };
 
 /** The template's worked-example running order — a storyboard that reproduces
@@ -144,6 +165,7 @@ export const SCREEN_KINDS: Record<SceneKind, number> = {
 export const TEMPLATE_ORDER: SceneKind[] = ["hook", "oneTap", "press", "verdict", "features", "orbit", "dashboard", "tagline", "logo"];
 
 export const SIGNATURE_KINDS: SceneKind[] = ["typewriter", "split", "steps"];
+export const SHOWREEL_KINDS: SceneKind[] = ["kinetic", "cube", "wall", "tour", "morph"];
 
 export const DEFAULT_THEME: Theme = {
   colors: {
@@ -181,7 +203,7 @@ export const DEFAULT_THEME: Theme = {
 export function demoStoryboard(width = 1080, height = 1920): Storyboard {
   const fps = 60;
   const T = { hook: 0, typewriter: 210, press: 330, verdict: 450, split: 690, orbit: 900, dashboard: 1200, steps: 1500, tagline: 1740, logo: 1860, end: 2100 };
-  const seg = (id: SceneKind, a: number, b: number, copy: Record<string, string>, screens?: string[]) => ({ id, kind: id, start: a, duration: b - a, copy, ...(screens ? { screens } : {}) });
+  const seg = (id: SceneKind, a: number, b: number, copy: Record<string, string>, screens?: string[]) => ({ id, kind: id, transition: "cut" as const, start: a, duration: b - a, copy, ...(screens ? { screens } : {}) });
   return {
     fps,
     durationFrames: T.end,

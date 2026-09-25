@@ -33,7 +33,7 @@ export interface ChatResponse {
   attempts: number;
 }
 
-export type Purpose = "rank" | "title" | "copy" | "storyboard" | "vision" | "broll_plan" | "creative_copy" | "extract";
+export type Purpose = "rank" | "title" | "copy" | "storyboard" | "vision" | "broll_plan" | "creative_copy" | "extract" | "promo_direction" | "promo_vision";
 
 export interface UsageSink {
   (u: { provider: ProviderId; model: string; kind: "chat" | "stt"; purpose?: string; inputTokens?: number; outputTokens?: number; seconds?: number; usdEstimate: number }): Promise<void> | void;
@@ -43,6 +43,8 @@ export interface CallContext {
   purpose: Purpose | string;
   /** hard cap on output tokens for this call, enforced before the request */
   maxOutputTokens?: number;
+  /** transport attempts allowed (default MAX_ATTEMPTS); also sizes the budget hold */
+  maxAttempts?: number;
   signal?: AbortSignal;
   recordUsage?: UsageSink;
   log?: { info: (o: object, m?: string) => void; warn: (o: object, m?: string) => void };

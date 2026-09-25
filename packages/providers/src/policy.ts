@@ -40,6 +40,8 @@ export interface FetchJsonOptions {
   provider: string;
   /** Called on a non-retryable 4xx; return a modified body to retry once (e.g. drop response_format). */
   onBadRequest?: (body: string) => unknown | undefined;
+  /** at most MAX_ATTEMPTS */
+  maxAttempts?: number;
   log?: { warn: (o: object, m?: string) => void };
 }
 
@@ -66,7 +68,8 @@ export async function postJsonWithRetry<T>(opts: FetchJsonOptions): Promise<{ da
   let body = opts.body;
   let adjusted = false;
   let lastErr: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+  const maxAttempts = Math.max(1, Math.min(MAX_ATTEMPTS, opts.maxAttempts ?? MAX_ATTEMPTS));
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (opts.signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new Error("total timeout")), TOTAL_TIMEOUT_MS);
@@ -105,7 +108,7 @@ export async function postJsonWithRetry<T>(opts: FetchJsonOptions): Promise<{ da
         }
       }
       const err = new ProviderHttpError(res.status, text, res.headers.get("retry-after"), opts.provider);
-      if (!err.retrySafe || attempt === MAX_ATTEMPTS - 1) throw err;
+      if (!err.retrySafe || attempt === maxAttempts - 1) throw err;
       lastErr = err;
       const wait = backoffSecs(attempt, err.retryAfter);
       opts.log?.warn({ provider: opts.provider, status: res.status, attempt, wait }, "retrying provider call");
@@ -113,7 +116,7 @@ export async function postJsonWithRetry<T>(opts: FetchJsonOptions): Promise<{ da
     } catch (err) {
       if (opts.signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false });
       if (err instanceof ProviderHttpError) {
-        if (!err.retrySafe || attempt === MAX_ATTEMPTS - 1) throw err;
+        if (!err.retrySafe || attempt === maxAttempts - 1) throw err;
         lastErr = err;
         await sleep(backoffSecs(attempt, err.retryAfter) * 1000, opts.signal);
         continue;
@@ -121,7 +124,7 @@ export async function postJsonWithRetry<T>(opts: FetchJsonOptions): Promise<{ da
       if (opts.signal?.aborted) throw new PipelineError("cancelled", { retrySafe: false });
       // transport error / timeout → retryable
       lastErr = err;
-      if (attempt === MAX_ATTEMPTS - 1) break;
+      if (attempt === maxAttempts - 1) break;
       await sleep(backoffSecs(attempt, null) * 1000, opts.signal);
     } finally {
       clearTimeout(timer);

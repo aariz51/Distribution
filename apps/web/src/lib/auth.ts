@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import argon2 from "argon2";
 import { timingSafeEqual } from "node:crypto";
-import { accounts, db, eq, users } from "./db";
+import { accounts, db, eq, sql, users } from "./db";
 import { newId } from "@distribution/core";
 import { requireEnv } from "./env";
 
@@ -69,25 +69,74 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+// A real hash to verify against when the email is unknown, so a miss costs the
+// same time as a wrong password and response timing does not reveal accounts.
+let decoyHash: Promise<string> | undefined;
+function decoy(): Promise<string> {
+  decoyHash ??= argon2.hash("distribution-decoy-password");
+  return decoyHash;
+}
+
 /**
- * Phase 1 single-tenant login: the password is APP_PASSWORD. On first login the
- * account + user rows are created (with an argon2 hash) so Phase 6 multi-user
- * can switch to per-user passwords without a data migration.
+ * Email and password sign-in against the user's own argon2 hash.
+ *
+ * APP_PASSWORD is only a bootstrap: on a fresh install, before any owner
+ * workspace exists, it creates the operator's workspace and first user. After
+ * that it grants nothing, so it cannot be used to add users to the operator's
+ * workspace or to reach anyone else's.
  */
 export async function loginWithPassword(email: string, password: string): Promise<Session | null> {
-  const expected = requireEnv("APP_PASSWORD");
-  if (!safeEqual(password, expected)) return null;
-  const accountName = process.env.APP_ACCOUNT_NAME ?? "Founder";
-  let account = (await db.select().from(accounts).where(eq(accounts.name, accountName)).limit(1))[0];
-  if (!account) account = (await db.insert(accounts).values({ id: newId(), name: accountName }).returning())[0]!;
-  let user = (await db.select().from(users).where(eq(users.email, email)).limit(1))[0];
-  if (!user) {
-    user = (
-      await db
-        .insert(users)
-        .values({ id: newId(), accountId: account.id, email, passwordHash: await argon2.hash(password) })
-        .returning()
-    )[0]!;
+  const address = normalizeEmail(email);
+  const user = (await db.select().from(users).where(eq(users.email, address)).limit(1))[0];
+  if (user) {
+    const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
+    return ok ? { userId: user.id, accountId: user.accountId, email: user.email } : null;
   }
-  return { userId: user.id, accountId: user.accountId, email: user.email };
+  await argon2.verify(await decoy(), password).catch(() => false);
+
+  const bootstrap = process.env.APP_PASSWORD;
+  if (!bootstrap || !safeEqual(password, bootstrap)) return null;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended('owner-bootstrap', 0))`);
+    const owner = (await tx.select().from(accounts).where(eq(accounts.isOwner, true)).limit(1))[0];
+    if (owner) return null;
+    const account = (await tx.insert(accounts).values({ id: newId(), name: process.env.APP_ACCOUNT_NAME ?? "Owner", isOwner: true }).returning())[0]!;
+    const created = (await tx.insert(users).values({ id: newId(), accountId: account.id, email: address, passwordHash: await argon2.hash(password) }).returning())[0]!;
+    return { userId: created.id, accountId: created.accountId, email: created.email };
+  });
+}
+
+export class SignupError extends Error {
+  constructor(message: string, readonly status: 400 | 403 | 409) {
+    super(message);
+    this.name = "SignupError";
+  }
+}
+
+export function signupsOpen(): boolean {
+  return (process.env.SIGNUPS ?? "open").toLowerCase() !== "closed";
+}
+
+/** Creates a new, separate workspace with its first user. */
+export async function signUp(input: { email: string; password: string; workspace: string }): Promise<Session> {
+  if (!signupsOpen()) throw new SignupError("Signing up is closed on this installation.", 403);
+  const address = normalizeEmail(input.email);
+  const passwordHash = await argon2.hash(input.password);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`signup:${address}`}, 0))`);
+    const taken = (await tx.select({ id: users.id }).from(users).where(eq(users.email, address)).limit(1))[0];
+    if (taken) throw new SignupError("An account with this email already exists. Sign in instead.", 409);
+    const account = (await tx.insert(accounts).values({ id: newId(), name: input.workspace.trim(), isOwner: false }).returning())[0]!;
+    const user = (await tx.insert(users).values({ id: newId(), accountId: account.id, email: address, passwordHash }).returning())[0]!;
+    return { userId: user.id, accountId: user.accountId, email: user.email };
+  });
+}
+
+export async function isOwnerAccount(accountId: string): Promise<boolean> {
+  const row = (await db.select({ isOwner: accounts.isOwner }).from(accounts).where(eq(accounts.id, accountId)).limit(1))[0];
+  return Boolean(row?.isOwner);
 }

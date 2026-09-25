@@ -13,7 +13,12 @@
     "@distribution/core": "workspace:*",
     "@distribution/db": "workspace:*",
     "@distribution/jobs": "workspace:*",
+    "@distribution/media": "workspace:*",
+    "@distribution/pipelines": "workspace:*",
+    "@distribution/providers": "workspace:*",
+    "@distribution/publishing": "workspace:*",
     "@distribution/storage": "workspace:*",
+    "@phosphor-icons/react": "^2.1.10",
     "argon2": "^0.45.1",
     "dotenv": "^18.0.1",
     "jose": "^6.2.12",
@@ -21,11 +26,8 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "sharp": "^0.35.4",
-    "zod": "^4.6.5",
-    "@distribution/media": "workspace:*",
-    "@distribution/pipelines": "workspace:*",
-    "@distribution/providers": "workspace:*",
-    "@distribution/publishing": "workspace:*"
+    "simple-icons": "^16.32.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

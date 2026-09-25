@@ -18,6 +18,23 @@ import { bin, run } from "@distribution/media";
 
 export const DEFAULT_API_URL = "https://api.postiz.com/public/v1";
 
+/**
+ * Channel types a workspace can add from our UI through Postiz's OAuth route.
+ * Ids are Postiz provider identifiers; credential-based providers (Bluesky,
+ * Mastodon) are left out because that route has no redirect for them.
+ */
+export const CONNECTABLE_PROVIDERS = [
+  { id: "tiktok", label: "TikTok" },
+  { id: "youtube", label: "YouTube" },
+  { id: "instagram-standalone", label: "Instagram" },
+  { id: "facebook", label: "Facebook" },
+  { id: "x", label: "X" },
+  { id: "linkedin", label: "LinkedIn" },
+  { id: "linkedin-page", label: "LinkedIn Page" },
+  { id: "threads", label: "Threads" },
+  { id: "pinterest", label: "Pinterest" },
+] as const;
+
 /** Postiz allows 90 create-post calls an hour (100 on cloud). */
 export const CREATE_POST_HOURLY_LIMIT = 90;
 
@@ -198,6 +215,32 @@ export class PostizClient {
       profile: (r.profile as string | undefined) ?? null,
       disabled: Boolean(r.disabled),
     }));
+  }
+
+  /**
+   * The provider's own OAuth page for adding a channel to this Postiz
+   * organisation (`GET /social/:provider`). The user authorises on the
+   * provider's site and lands on Postiz's callback, so callers open it in a new
+   * tab and poll `listIntegrations` for the new channel. Pass `refresh` with an
+   * existing integration id to reconnect that channel instead.
+   */
+  async connectUrl(provider: string, opts: { refresh?: string; signal?: AbortSignal } = {}): Promise<string> {
+    if (!CONNECTABLE_PROVIDERS.some((p) => p.id === provider)) throw new PipelineError(`Unsupported channel type: ${provider}`, { retrySafe: false, step: "connect" });
+    const query = opts.refresh ? `?${new URLSearchParams({ refresh: opts.refresh })}` : "";
+    const data = (await this.request("GET", `/social/${encodeURIComponent(provider)}${query}`, { headers: this.headers() }, opts.signal)) as { url?: unknown };
+    const url = typeof data.url === "string" ? data.url : "";
+    if (!/^https:\/\//.test(url)) throw new PipelineError("Postiz did not return a sign-in link for this channel", { retrySafe: true, step: "connect" });
+    return url;
+  }
+
+  /** Removes a channel from the Postiz organisation. Already-removed is not an error. */
+  async deleteIntegration(id: string, signal?: AbortSignal): Promise<void> {
+    try {
+      await this.request("DELETE", `/integrations/${encodeURIComponent(id)}`, { headers: this.headers() }, signal);
+    } catch (err) {
+      if (err instanceof PostizError && err.status === 404) return;
+      throw err;
+    }
   }
 
   /**

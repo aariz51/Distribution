@@ -3,9 +3,9 @@ import { THUMBNAIL_VARIANTS } from "../thumbnail-render";
 import { attachClipThumbnail, saveGeneratedAsset } from "../generated-assets";
 import { reconcileShortsProject } from "./completion";
 import path from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { PipelineError, newId } from "@distribution/core";
-import { assets, eq, transcripts, candidates } from "@distribution/db";
+import { assets, eq, transcripts, candidates, sourceVideos } from "@distribution/db";
 import type { JobContext } from "@distribution/jobs";
 import { bin, run, probeMedia } from "@distribution/media";
 import { getLlm } from "@distribution/providers";
@@ -15,6 +15,31 @@ import { pickFrame, runCreative } from "./sidecars";
 import { CREATIVE_COPY_SYSTEM, CREATIVE_COPY_USER, creativeBrandContext, fillPrompt, parseCopy } from "./ranking";
 
 const LAYOUTS = ["bottom-anchor", "top-banner", "split"] as const;
+
+export interface CoverSampleWindow {
+  path: string;
+  startSec: number;
+  durationSec: number;
+  from: "source" | "clip";
+}
+
+/**
+ * Where to sample cover frames from.
+ *
+ * The finished clip already carries burned captions and the title band, so a
+ * frame taken from it puts that text underneath the cover's own headline (two
+ * sets of words fighting in one image). The original source over the clip's
+ * time range is the same picture without any overlay, so it is preferred;
+ * the clip is only used when the source is gone or the range is unusable.
+ */
+export function coverSampleWindow(input: { clipPath: string; clipDurationSec: number; sourcePath?: string; sourceDurationSec?: number; startSec?: number; endSec?: number }): CoverSampleWindow {
+  const { startSec: start, endSec: end, sourcePath, sourceDurationSec } = input;
+  if (sourcePath && sourceDurationSec && Number.isFinite(start) && Number.isFinite(end) && start! >= 0 && end! > start! && end! <= sourceDurationSec + 0.1) {
+    const span = end! - start!;
+    return { path: sourcePath, startSec: start! + span * 0.08, durationSec: span * 0.84, from: "source" };
+  }
+  return { path: input.clipPath, startSec: input.clipDurationSec * 0.08, durationSec: input.clipDurationSec * 0.84, from: "clip" };
+}
 
 /** shorts.thumbnail — the AutoShorts "post creative": sample frames, pick the cleanest, headline from the LLM, compose with brand palette + logo via creative.py. */
 export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
@@ -33,12 +58,27 @@ export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
   const logoPath = brand.logo ? await storage.localPathFor(brand.logo.storageKey) : undefined;
   const screenshot = brand.screenshots[0];
 
+  let sourcePath: string | undefined;
+  let sourceDurationSec: number | undefined;
+  if (asset.sourceId) {
+    const source = (await db.select().from(sourceVideos).where(eq(sourceVideos.id, asset.sourceId)).limit(1))[0];
+    if (source?.storageKey && source.productId === productId) {
+      const candidatePath = await storage.localPathFor(source.storageKey);
+      if (await stat(candidatePath).then((s) => s.isFile(), () => false)) {
+        sourcePath = candidatePath;
+        sourceDurationSec = (await probeMedia(candidatePath, { signal: ctx.signal })).durationSec;
+      }
+    }
+  }
+  const sample = coverSampleWindow({ clipPath: local, clipDurationSec: probe.durationSec, sourcePath, sourceDurationSec, startSec: meta.startSec, endSec: meta.endSec });
+  if (sample.from === "clip") await ctx.event("warn", "original source unavailable; sampling cover frames from the captioned clip", undefined, "frames");
+
   const out = await withScratch("thumb", async (scratch) => {
-    await ctx.progress(10, "frames", "sampling frames");
+    await ctx.progress(10, "frames", `sampling frames from the ${sample.from === "source" ? "original, without captions" : "clip"}`);
     const framesDir = path.join(scratch, "frames");
     await run("mkdir", ["-p", framesDir], { step: "frames" });
-    const step = Math.max(0.5, (probe.durationSec * 0.84) / 16);
-    await run(bin("ffmpeg"), ["-v", "error", "-y", "-ss", (probe.durationSec * 0.08).toFixed(3), "-t", (probe.durationSec * 0.84).toFixed(3), "-i", local, "-vf", `fps=1/${step.toFixed(3)}`, "-q:v", "2", path.join(framesDir, "frame_%03d.jpg")], { timeoutMs: 10 * 60_000, signal: ctx.signal, step: "frames" });
+    const step = Math.max(0.5, sample.durationSec / 16);
+    await run(bin("ffmpeg"), ["-v", "error", "-y", "-ss", sample.startSec.toFixed(3), "-t", sample.durationSec.toFixed(3), "-i", sample.path, "-vf", `fps=1/${step.toFixed(3)}`, "-q:v", "2", path.join(framesDir, "frame_%03d.jpg")], { timeoutMs: 10 * 60_000, signal: ctx.signal, step: "frames" });
     const frames = (await readdir(framesDir)).filter((f) => f.endsWith(".jpg")).sort().map((f) => path.join(framesDir, f));
     if (!frames.length) throw new PipelineError("no frames sampled", { step: "frames" });
     await ctx.progress(35, "pick", `scoring ${frames.length} frames`);
@@ -87,7 +127,7 @@ export async function shortsThumbnail(ctx: JobContext<"shorts.thumbnail">) {
     let thumbId = newId();
     const key = keys.thumbnail(projectId, assetId).replace(/\.png$/, `-${variant.name}.png`);
     await storage.putFile(key, pngPath, { contentType: "image/png" });
-    thumbId = await saveGeneratedAsset(db, { id: thumbId, productId, projectId, type: "thumbnail", sourceId: asset.sourceId, candidateId: asset.candidateId, derivedFromAssetId: assetId, storageKey: key, mimeType: "image/png", width: variant.size[0], height: variant.size[1], status: "review", approvalState: "pending", profileVersion: profile.version, jobId: ctx.jobId, metadata: { variant: variant.name, platforms: variant.platforms, headline, kicker, layout, frame: path.basename(best.path), textiness: best.textiness } });
+    thumbId = await saveGeneratedAsset(db, { id: thumbId, productId, projectId, type: "thumbnail", sourceId: asset.sourceId, candidateId: asset.candidateId, derivedFromAssetId: assetId, storageKey: key, mimeType: "image/png", width: variant.size[0], height: variant.size[1], status: "review", approvalState: "pending", profileVersion: profile.version, jobId: ctx.jobId, metadata: { variant: variant.name, platforms: variant.platforms, headline, kicker, layout, frame: path.basename(best.path), frameFrom: sample.from, textiness: best.textiness } });
     variantIds[variant.name] = thumbId;
     if (variant.name === "portrait") primaryId = thumbId;
     }

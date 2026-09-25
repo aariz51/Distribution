@@ -14,6 +14,10 @@ const DEFAULT_ROUTES: Record<Purpose, string> = {
   vision: "openrouter:google/gemini-2.5-flash,openai:gpt-4o-mini",
   broll_plan: "openrouter:anthropic/claude-sonnet-4.5,openrouter:google/gemini-2.5-flash",
   extract: "openrouter:google/gemini-2.5-flash-lite",
+  // Promo films: Opus 5.5 directs and reads the reference; Sonnet 5 only if Opus fails.
+  // Override with LLM_PROMO_DIRECTION / LLM_PROMO_VISION.
+  promo_direction: "openrouter:anthropic/claude-opus-5.5,openrouter:anthropic/claude-sonnet-5",
+  promo_vision: "openrouter:anthropic/claude-opus-5.5,openrouter:anthropic/claude-sonnet-5",
 };
 
 const PROVIDER_IDS: ProviderId[] = ["openrouter", "anthropic", "deepseek", "openai", "groq", "gemini", "ollama"];

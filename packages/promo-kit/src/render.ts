@@ -22,6 +22,8 @@ export interface RenderOptions {
   outPath: string;
   /** Directory served as `staticFile()` root: the project's own public/ dir. */
   publicDir?: string;
+  /** false renders with every Cube Motion switched off (for measuring its contribution). */
+  cube?: boolean;
   onProgress?: RenderProgress;
   /** Fail the render if no frame completes for this long (default 4 minutes). */
   stallTimeoutMs?: number;
@@ -53,7 +55,7 @@ export async function renderPromo(opts: RenderOptions): Promise<{ outPath: strin
   opts.signal?.throwIfAborted();
   opts = { ...opts, outPath: path.resolve(opts.outPath) };
   const theme = opts.theme ?? DEFAULT_THEME;
-  const inputProps = KitProps.parse({ storyboard: opts.storyboard, theme });
+  const inputProps = KitProps.parse({ storyboard: opts.storyboard, theme, ...(opts.cube === false ? { cube: false } : {}) });
   return bundles.use(opts.publicDir, async serveUrl => {
     const composition = await selectComposition({ serveUrl, id: opts.compositionId, inputProps, chromiumOptions: chromiumOptions() });
     opts.signal?.throwIfAborted();
@@ -115,7 +117,7 @@ export async function renderPromoStill(opts: Omit<RenderOptions, "onProgress" | 
   opts.signal?.throwIfAborted();
   opts = { ...opts, outPath: path.resolve(opts.outPath) };
   const theme = opts.theme ?? DEFAULT_THEME;
-  const inputProps = KitProps.parse({ storyboard: opts.storyboard, theme });
+  const inputProps = KitProps.parse({ storyboard: opts.storyboard, theme, ...(opts.cube === false ? { cube: false } : {}) });
   return bundles.use(opts.publicDir, async serveUrl => {
     const composition = await selectComposition({ serveUrl, id: opts.compositionId, inputProps, chromiumOptions: chromiumOptions() });
     opts.signal?.throwIfAborted();

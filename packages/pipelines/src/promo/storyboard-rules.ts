@@ -211,6 +211,7 @@ export function buildStoryboard(input: BuildInput): BuiltStoryboard {
     scenes.push({
       id,
       kind: b.kind,
+      transition: "cut",
       start: cursor,
       duration: frames,
       copy,
